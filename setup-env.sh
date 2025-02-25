@@ -62,7 +62,8 @@ LOGE() {
 }
 
 # Define and export global variables
-export WORK_DIR=`pwd`
+#export WORK_DIR=`pwd`
+export WORK_DIR=$(dirname "$(realpath "$0")")
 
 export ANDROID_DIR="${WORK_DIR}/android"
 export BUILD_DIR="${WORK_DIR}/out"

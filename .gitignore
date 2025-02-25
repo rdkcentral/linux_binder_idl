@@ -1,0 +1,4 @@
+android/
+*/**/*.pyc
+local/
+out/

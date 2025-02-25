@@ -1,0 +1,8 @@
+########################################################################
+# ERROR: AIDL API change detected                                      #
+########################################################################
+Above AIDL file(s) has changed. Run `aidl_ops -u  %s` to reflect the
+changes to the current version so that it is reviewed by An
+architecture team And then you need to change dependency on %s-* to
+%s-unstable-* 
+or %s-<nextVersion>-* to use new APIs.

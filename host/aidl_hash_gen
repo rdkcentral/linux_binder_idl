@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [ $# != 3 ]; then
+  echo "Usage: hash_gen.sh <api_path> <latest-version> <hash_file_path>"
+  exit 1
+fi
+(cd $1 && find ./ -name "*.aidl" -print0 | LC_ALL=C sort -z | xargs -0 sha1sum && echo $2) | sha1sum | cut -d " " -f 1 >> $3
