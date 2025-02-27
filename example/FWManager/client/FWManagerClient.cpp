@@ -62,7 +62,7 @@ int main() {
 
     printf("\n\n");
     printf("###########################################################\n");
-    printf("FWManager Test App - V%s %s\n", FW_MGR_TEST_APP_VERSION, __TIMESTAMP__);
+    printf("FWManager Test App - V%s %s\n", __TIMESTAMP__);
     printf("###########################################################\n");
     printf("\n\n");
 
