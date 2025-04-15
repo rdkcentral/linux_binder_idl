@@ -1,13 +1,40 @@
 #!/usr/bin/env python3
 
 """
-    -r (--interfaces_roots)
-    -u (--update_api)
-    -f (--freeze_api)
-    -g (--generate_source)
-    -a (--generate_deps)
-    -d (--gen_dir)
-    -o (--out_dir)
+    aidl_ops -u|--update_api [OPTION]... INPUT...
+        Performs update api for the given Interface
+
+    aidl_ops -f|--freeze_api [OPTION]... INPUT...
+        Performs freeze api for the given Interface
+
+    aidl_ops -g|--generate_source [OPTION]... INPUT...
+        Generates sources for the given Interface and version
+
+    aidl_ops -a|--generate_deps [OPTION]... INPUT...
+        Generates dependency tree of interface libraries(stubs and proxies)
+        of interfaces defined in given directories
+
+    OPTIONS:
+        -r DIRS(--interfaces_roots=DIRS)
+            ";" separated list of root directories where interfaces are located
+        -u (--update_api)
+            Perform update API for the given interface
+        -f (--freeze_api)
+            Perform Freeze API for the given interface
+        -g (--generate_source)
+            Generate Sources for the given Interface
+        -a (--generate_deps)
+            Generate interfaces libraries dependency tree
+        -d DIR (--gen_dir=DIR)
+            Directory path to generate sources.
+        -o DIR (--out_dir=DIR)
+            Build directory for intermediatory files
+
+    INPUT:
+        Interface Name
+
+    OUTPUT:
+        As per the operation selected
 """
 
 
@@ -20,7 +47,7 @@ from os import path
 from logger import Logger
 import aidl_api
 import aidl_gen_rule
-from aidl_interface import CMD_AIDL
+from aidl_interface import CMD_AIDL, CMD_GEN_AIDL, exec_cmd
 
 
 #_LOG_LEVEL = Logger.VERBOSE
@@ -101,8 +128,10 @@ def main(argv):
     global _gen_deps
 
     if not path.exists(CMD_AIDL):
-        logger.fatal("aidl is not installed at %s" %(CMD_AIDL))
-        sys.exit(2)
+        logger.info("Installed aidl at %s" %(CMD_AIDL))
+        logger.info("Installation Script: %s" %(CMD_GEN_AIDL))
+        exec_cmd([CMD_GEN_AIDL])
+        
 
     _intfs_roots.append(os.getcwd())
 
@@ -119,53 +148,52 @@ def main(argv):
                 ])
 
     for o, a in opts:
-        match o:
-            case "-r" | "--interfaces_roots":
-                for p in a.split(";"):
-                    if path.exists(path.realpath(p)):
-                        _intfs_roots.append(path.realpath(p))
-                    else:
-                        logger.warning(
-                                "Provided path, %s, for interfaces doesn't exist." % (p))
-
-            case "-u" | "--update_api":
-                if _operation is None:
-                    _operation = "update_api"
+        if o == "-r" or o == "--interfaces_roots":
+            for p in a.split(";"):
+                if path.exists(path.realpath(p)):
+                    _intfs_roots.append(path.realpath(p))
                 else:
-                    error = 1; # Multiple Operations
+                    logger.warning(
+                            "Provided path, %s, for interfaces doesn't exist." % (p))
 
-            case "-f" | "--freeze_api":
-                if _operation is None:
-                    _operation = "freeze_api"
-                else:
-                    error = 1; # Multiple Operations
+        elif o == "-u" or o == "--update_api":
+            if _operation is None:
+                _operation = "update_api"
+            else:
+                error = 1; # Multiple Operations
 
-            case "-g" | "--generate_source":
-                if _operation is None:
-                    _operation = "generate_source"
-                else:
-                    error = 1; # Multiple Operations
+        elif o == "-f" or o == "--freeze_api":
+            if _operation is None:
+                _operation = "freeze_api"
+            else:
+                error = 1; # Multiple Operations
 
-            case "-a" | "--generate_deps":
-                if _operation is None:
-                    _operation = "generate_deps"
-                else:
-                    error = 1; # Multiple Operations
+        elif o == "-g" or o == "--generate_source":
+            if _operation is None:
+                _operation = "generate_source"
+            else:
+                error = 1; # Multiple Operations
 
-            case "-d" | "--gen_dir":
-                _gen_dir = a
+        elif o == "-a" or o == "--generate_deps":
+            if _operation is None:
+                _operation = "generate_deps"
+            else:
+                error = 1; # Multiple Operations
 
-            case "-d" | "--gen_dir":
-                _gen_dir = a
+        elif o == "-d" or o == "--gen_dir":
+            _gen_dir = a
 
-            case "-v" | "--version":
-                _gen_version = a
+        elif o == "-d" or o == "--gen_dir":
+            _gen_dir = a
 
-            case "-o" | "--out_dir":
-                _out_dir = a
+        elif o == "-v" or o == "--version":
+            _gen_version = a
 
-            case _:
-                logger.error("Invalide argument, %s" %(o))
+        elif o == "-o" or o == "--out_dir":
+            _out_dir = a
+
+        else:
+            logger.error("Invalide argument, %s" %(o))
 
     if _operation != "generate_deps":
         if len(args) == 1:

@@ -74,3 +74,20 @@ index 9ccad24..e25d889 100644
  #include <string>
  
  class AidlLocation {
+diff --git a/generate_cpp.cpp b/generate_cpp.cpp
+index 988ac2b..eb0723e 100644
+--- a/generate_cpp.cpp
++++ b/generate_cpp.cpp
+@@ -897,10 +897,11 @@ void GenerateInterfaceClassDecl(CodeWriter& out, const AidlInterface& interface,
+   out.Indent();
+   out << "DECLARE_META_INTERFACE(" << ClassName(interface, ClassNames::BASE) << ")\n";
+   if (options.Version() > 0) {
+-    out << "const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
++    out << "static const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
+   }
+   if (!options.Hash().empty()) {
+     out << "const std::string HASH = \"" << options.Hash() << "\";\n";
++    out << "static constexpr char* HASHVALUE = \"" << options.Hash() << "\";\n";
+   }
+   GenerateNestedTypeDecls(out, interface, typenames, options);
+   GenerateConstantDeclarations(out, interface, typenames);

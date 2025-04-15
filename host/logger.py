@@ -53,23 +53,22 @@ class Logger:
         self._log(self.VERBOSE, msg)
 
     def _log(self, level, msg):
-        match level:
-            case self.FATAL:
-                self._print(Fore.RED, level, msg)
-                #TODO kill the execution
-                return
-            case self.ERROR:
-                self._print(Fore.RED, level, msg)
-                return
-            case self.WARNING:
-                self._print(Fore.YELLOW, level, msg)
-                return
-            case self.INFO | self.DEBUG | self.VERBOSE:
-                self._print(Fore.BLACK, level, msg)
-                return
-            case _:
-                self._print(Fore.BLACK, self.VERBOSE, msg)
-                return
+        if level == self.FATAL:
+            self._print(Fore.RED, level, msg)
+            #TODO kill the execution
+            return
+        elif level == self.ERROR:
+            self._print(Fore.RED, level, msg)
+            return
+        elif level == self.WARNING:
+            self._print(Fore.YELLOW, level, msg)
+            return
+        elif level == self.INFO or level == self.DEBUG or level == self.VERBOSE:
+            self._print(Fore.BLACK, level, msg)
+            return
+        else:
+            self._print(Fore.BLACK, self.VERBOSE, msg)
+            return
 
     def _print(self, fore, level, msg):
         if (level <= self._log_level):

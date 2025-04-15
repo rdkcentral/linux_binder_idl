@@ -41,10 +41,13 @@ INTERFACE_DEF_YAML  = "interface.yaml"
 LIBRARIES_DEPENDECIES_FILE = "dependencies.txt"
 
 # Commands
-# TODO compile aidl_hash_gen in out directory
 CMD_AIDL = path.realpath(
-        path.join(get_host_dir(), "../out", "aidl")
+        path.join(get_host_dir(), "../local/bin", "aidl")
         )
+CMD_GEN_AIDL = path.realpath(
+        path.join(get_host_dir(), "../build-aidl-generator-tool.sh")
+        )
+# TODO compile aidl_hash_gen in out directory
 CMD_AIDL_HASH_GEN = path.join(get_host_dir(), "aidl_hash_gen")
 CMD_INTF_DEF_UPDATE = path.join(get_host_dir(), "intf-update")
 
@@ -276,43 +279,41 @@ def process_imports(aidl_intf, aidl_intfs, api_deps):
     switch_version = False
     intf_version = api_deps.version
     imports = {}
-    match api_deps.import_ver_type:
-        case "next":
+    if api_deps.import_ver_type == "next":
+        imports = aidl_intf.get_imports(aidl_intf.next_version())
+        for imp in list(imports.keys()):
+            imp_intf = aidl_intfs[imp]
+            api_deps.set_version(imp_intf.next_version())
+            api_deps.set_name(imp_intf.base_name)
+            api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
+
+    elif api_deps.import_ver_type == "latest":
+        if rec_counter == 1:
+            # List of direct dependencies
             imports = aidl_intf.get_imports(aidl_intf.next_version())
-            for imp in list(imports.keys()):
-                imp_intf = aidl_intfs[imp]
-                api_deps.set_version(imp_intf.next_version())
-                api_deps.set_name(imp_intf.base_name)
-                api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
+        else:
+            # List of indirect dependencies (dependencies of direct dependant interfaces)
+            # get imports from latest frozen version
+            imports = aidl_intf.get_imports(aidl_intf.latest_version())
 
-        case "latest":
-            if rec_counter == 1:
-                # List of direct dependencies
-                imports = aidl_intf.get_imports(aidl_intf.next_version())
+        for imp in list(imports.keys()):
+            imp_intf = aidl_intfs[imp]
+            # Set version as per thier frozen versions
+            # in case of unknown(case of direct dependencies), set it to the latest
+            if imports[imp] == "unknown":
+                api_deps.set_version(imp_intf.latest_version())
             else:
-                # List of indirect dependencies (dependencies of direct dependant interfaces)
-                # get imports from latest frozen version
-                imports = aidl_intf.get_imports(aidl_intf.latest_version())
-
-            for imp in list(imports.keys()):
-                imp_intf = aidl_intfs[imp]
-                # Set version as per thier frozen versions
-                # in case of unknown(case of direct dependencies), set it to the latest
-                if imports[imp] == "unknown":
-                    api_deps.set_version(imp_intf.latest_version())
-                else:
-                    api_deps.set_version(imports[imp])
-                api_deps.set_name(imp_intf.base_name)
-                api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
-
-        case "frozen":
-            imports = aidl_intf.get_imports(intf_version)
-            for imp in list(imports.keys()):
-                imp_intf = aidl_intfs[imp]
                 api_deps.set_version(imports[imp])
-                api_deps.set_name(imp_intf.base_name)
-                api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
+            api_deps.set_name(imp_intf.base_name)
+            api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
 
+    elif api_deps.import_ver_type == "frozen":
+        imports = aidl_intf.get_imports(intf_version)
+        for imp in list(imports.keys()):
+            imp_intf = aidl_intfs[imp]
+            api_deps.set_version(imports[imp])
+            api_deps.set_name(imp_intf.base_name)
+            api_deps = process_imports(imp_intf, aidl_intfs, api_deps)
 
     if rec_counter != 1:
         logger.verbose("Addind Dependency %s-V%s" %(aidl_intf.base_name, intf_version))
@@ -759,7 +760,7 @@ class AidlInterface:
 
 
 def exec_cmd(cmd):
-    logger.verbose("Running [%s]" %(" ".join(cmd)))
+    logger.info("Running [%s]" %(" ".join(cmd)))
 
     result = subprocess.run(" ".join(cmd), stdout=PIPE, stderr=PIPE, shell=True)
     if result.returncode:

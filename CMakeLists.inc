@@ -132,8 +132,6 @@ set(TOOLS_DIR "${CMAKE_CURRENT_LIST_DIR}/tools")
 set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
 
-set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_LIST_DIR}/local)
-
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
     message("Set cmake install lib directory")
     set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib)
@@ -228,6 +226,7 @@ if (BUILD_WITH_LIBLOG)
         ${LIBLOG_DIR}/include
     )
 
+if (NOT BUILD_ENV_YOCTO)
     if (BUILD_SHARED_LIB)
         # Install the liblog library
         install(TARGETS
@@ -252,6 +251,7 @@ if (BUILD_WITH_LIBLOG)
         FILES_MATCHING
         PATTERN "*.h"   # Specify the pattern to match header files
     )
+endif ()
 endif ()
 
 ###########################################################
@@ -298,26 +298,29 @@ target_include_directories(base PRIVATE
 
 target_link_libraries(base PRIVATE log)
 
-if (BUILD_SHARED_LIB)
-    # Install the libbase library
-    install(TARGETS
-        base
+if (NOT BUILD_ENV_YOCTO)
+    if (BUILD_SHARED_LIB)
+        # Install the libbase library
+        # In Case of yocto, this will be handled by the separate recipe
+        install(TARGETS
+            base
 
-        LIBRARY
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+    endif ()
+
+    # Install the header files
+    set(HEADER_FILES_DIR ${LIBBASE_DIR}/include/android-base)
+
+    install(
+        DIRECTORY ${HEADER_FILES_DIR}
+
+        DESTINATION ${CMAKE_INSTALL_INCDIR}
+        FILES_MATCHING
+        PATTERN "*.h"   # Specify the pattern to match header files
     )
-endif ()
-
-# Install the header files
-set(HEADER_FILES_DIR ${LIBBASE_DIR}/include/android-base)
-
-install(
-    DIRECTORY ${HEADER_FILES_DIR}
-
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
-    FILES_MATCHING
-    PATTERN "*.h"   # Specify the pattern to match header files
-)
+endif()
 
 ###########################################################
 # Android libcutils_sockets
@@ -399,31 +402,34 @@ target_include_directories(cutils PRIVATE
 
 target_link_libraries(cutils PRIVATE log base cutils_sockets dl)
 
-if (BUILD_SHARED_LIB)
-    # Install the libcutils_sockets and libcutils library
-    install(TARGETS
-        cutils_sockets
-        cutils
+if (NOT BUILD_ENV_YOCTO)
+    if (BUILD_SHARED_LIB)
+        # Install the libcutils_sockets and libcutils library
+        # In Case of yocto, this will be handled by the separate recipe
+        install(TARGETS
+            cutils_sockets
+            cutils
 
-        LIBRARY
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+    endif()
+
+    # Install the header files
+    set(HEADER_FILES_DIR
+        ${LIBCUTILS_DIR}/include/cutils
+    )
+    #${LIBCUTILS_DIR}/include/private
+
+    install(
+        DIRECTORY
+        ${HEADER_FILES_DIR}
+
+        DESTINATION ${CMAKE_INSTALL_INCDIR}
+        FILES_MATCHING
+        PATTERN "*.h"   # Specify the pattern to match header files
     )
 endif()
-
-# Install the header files
-set(HEADER_FILES_DIR
-    ${LIBCUTILS_DIR}/include/cutils
-)
-#${LIBCUTILS_DIR}/include/private
-
-install(
-    DIRECTORY
-    ${HEADER_FILES_DIR}
-
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
-    FILES_MATCHING
-    PATTERN "*.h"   # Specify the pattern to match header files
-)
 
 ###########################################################
 # Android libutils
@@ -474,30 +480,33 @@ target_include_directories(utils PRIVATE
 
 target_link_libraries(utils PRIVATE log cutils)
 
-if (BUILD_SHARED_LIB)
-    # Install the libutils library
-    install(TARGETS
-        utils
+if (NOT BUILD_ENV_YOCTO)
+    if (BUILD_SHARED_LIB)
+        # Install the libutils library
+        # In Case of yocto, this will be handled by the separate recipe
+        install(TARGETS
+            utils
 
-        LIBRARY
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+    endif ()
+
+    # Install the header files
+    set(HEADER_FILES_DIR
+        ${LIBUTILS_DIR}/include/utils
     )
-endif ()
+    #${LIBUTILS_DIR}/include/system
 
-# Install the header files
-set(HEADER_FILES_DIR
-    ${LIBUTILS_DIR}/include/utils
-)
-#${LIBUTILS_DIR}/include/system
+    install(
+        DIRECTORY
+        ${HEADER_FILES_DIR}
 
-install(
-    DIRECTORY
-    ${HEADER_FILES_DIR}
-
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
-    FILES_MATCHING
-    PATTERN "*.h"   # Specify the pattern to match header files
-)
+        DESTINATION ${CMAKE_INSTALL_INCDIR}
+        FILES_MATCHING
+        PATTERN "*.h"   # Specify the pattern to match header files
+    )
+endif()
 
 ###########################################################
 # Android libbinder
@@ -615,28 +624,31 @@ endif ()
 
 target_link_libraries(binder PRIVATE log base cutils utils pthread)
 
-# Install the libbinder library
-install(TARGETS
-    binder
+if (NOT BUILD_ENV_YOCTO)
+    # Install the libbinder library
+    # In Case of yocto, this will be handled by the separate recipe
+    install(TARGETS
+        binder
 
-    LIBRARY
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-)
+        LIBRARY
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
 
-set(HEADER_FILES_DIR
-    ${BINDER_DIR}/include/binder
-    ${BINDER_DIR}/ndk/include_cpp/android
-)
+    set(HEADER_FILES_DIR
+        ${BINDER_DIR}/include/binder
+        ${BINDER_DIR}/ndk/include_cpp/android
+    )
 
-# Install the header files
-install(
-    DIRECTORY
-    ${HEADER_FILES_DIR}
+    # Install the header files
+    install(
+        DIRECTORY
+        ${HEADER_FILES_DIR}
 
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
-    FILES_MATCHING
-    PATTERN "*.h"   # Specify the pattern to match header files
-)
+        DESTINATION ${CMAKE_INSTALL_INCDIR}
+        FILES_MATCHING
+        PATTERN "*.h"   # Specify the pattern to match header files
+    )
+endif()
 
 ###########################################################
 # Android servicemanager
@@ -682,14 +694,17 @@ endif ()
 
 target_link_libraries(servicemanager PRIVATE binder utils cutils base log pthread)
 
-# Install the servicemanager binary
-install(
-    TARGETS
-    servicemanager
+if (NOT BUILD_ENV_YOCTO)
+    # Install the servicemanager binary
+    # In Case of yocto, this will be handled by the separate recipe
+    install(
+        TARGETS
+        servicemanager
 
-    RUNTIME
-    DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+        RUNTIME
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif ()
 
 if (BUILD_ENV_HOST)
     ###########################################################

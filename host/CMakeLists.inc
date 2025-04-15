@@ -9,7 +9,7 @@ project(Interface_Libraries)
 # before including this script
 #######################################################################
 set(LINUX_BINDER_AIDL_ROOT_HOST ${LINUX_BINDER_AIDL_ROOT}/host)
-set(AIDL_TOOL ${LINUX_BINDER_AIDL_ROOT_OUT}/aidl)
+set(AIDL_TOOL ${LINUX_BINDER_AIDL_ROOT}/local/bin/aidl)
 set(INTF_LIB_DEPS_FILE ${LINUX_BINDER_AIDL_ROOT_OUT}/dependencies.txt)
 
 #######################################################################
@@ -35,17 +35,17 @@ message(STATUS "Interface Root Directories: ${intfs_dir}")
 #######################################################################
 # Check if required host tool, aidl, is compiled. If mot compile it.
 #######################################################################
-if(EXISTS ${AIDL_TOOL})
-    message(STATUS "using aidl tool from ${AIDL_TOOL}")
-else()
-    message(STATUS "Compiling aidl at ${AIDL_TOOL}")
-    execute_process(
-        COMMAND cmake -B ${LINUX_BINDER_AIDL_ROOT_OUT} -S ${LINUX_BINDER_AIDL_ROOT}/aidl-generator -D CMAKE_INSTALL_PREFIX=${LINUX_BINDER_AIDL_ROOT_OUT}/host
-    )
-    execute_process(
-        COMMAND make -C ${LINUX_BINDER_AIDL_ROOT_OUT} install -j `nproc`
-    )
-endif()
+#if(EXISTS ${AIDL_TOOL})
+#    message(STATUS "using aidl tool from ${AIDL_TOOL}")
+#else()
+#    message(STATUS "Compiling aidl at ${AIDL_TOOL}")
+#    execute_process(
+#        COMMAND cmake -B ${LINUX_BINDER_AIDL_ROOT_OUT} -S ${LINUX_BINDER_AIDL_ROOT}/aidl-generator -D CMAKE_INSTALL_PREFIX=${LINUX_BINDER_AIDL_ROOT_OUT}/host
+#    )
+#    execute_process(
+#        COMMAND make -C ${LINUX_BINDER_AIDL_ROOT_OUT} install -j `nproc`
+#    )
+#endif()
 
 
 #######################################################################

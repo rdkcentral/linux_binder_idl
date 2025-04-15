@@ -37,7 +37,8 @@
 # *    4) The generated bins, libs and headers will be installed in ${INSTALL_DIR}.
 # *
 
-. ./setup-env.sh
+linux_binder_dir=$(dirname "$(realpath "$0")")
+. ${linux_binder_dir}/setup-env.sh
 if [ $? -ne 0 ]; then
     LOGE "Failed to export environments"
     exit 1
