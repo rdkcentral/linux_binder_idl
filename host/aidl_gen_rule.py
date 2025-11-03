@@ -217,11 +217,9 @@ def gen_cpp_sources(interface_name,
     if gen_dir is None:
         logger.debug("Generating sources at default Location")
         gen_dir = path.join(interface.interface_gen_dir,
-                    "src",
-                    "%s" %(version_dir))
+                    "%s" %(version_dir), "src")
         gen_dir_inc = path.join(interface.interface_gen_dir,
-                    "include",
-                    "%s" %(version_dir))
+                    "%s" %(version_dir), "include")
     else:
         gen_dir_inc = path.join(gen_dir, "include")
 
