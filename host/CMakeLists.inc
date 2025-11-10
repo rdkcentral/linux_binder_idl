@@ -137,8 +137,8 @@ function(AddInterfaceLibrary aidl_target)
     endforeach()
 
     list(GET interfaces_dir 0 first_interfaces_root)
-    set(source_dir ${first_interfaces_root}/stable/generated/${interface_name}/src/${interface_version})
-    set(include_dir ${first_interfaces_root}/stable/generated/${interface_name}/include/${interface_version})
+    set(source_dir ${first_interfaces_root}/stable/generated/${interface_name}/${interface_version}/src)
+    set(include_dir ${first_interfaces_root}/stable/generated/${interface_name}/${interface_version}/include)
 
     # Generate Sources
     message(STATUS "Command: ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops -g ${interface_version_arg} -r ${interfaces_dir} ${interface_name}")
