@@ -67,18 +67,53 @@ ROOT_DIR="${SCRIPT_DIR}"
 BUILD_DIR="${ROOT_DIR}/build-target"
 OUT_DIR="${ROOT_DIR}/out/target"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-TARGET_LIB32="${TARGET_LIB32_VERSION:-OFF}"
+TARGET_LIB32="${TARGET_LIB32_VERSION:-ON}"
 CLEAN_BUILD=false
 BUILD_HOST_AIDL_TOOL=true
 
-# Use CC/CXX/CFLAGS etc. for target cross-compilation
-# If not set, use system default (native build)
-# Yocto will set these with sysroot, target arch, etc.
-TARGET_CC="${CC:-}"
-TARGET_CXX="${CXX:-}"
+# Cross-compilation handling:
+#
+# Yocto/OE SDK environment-setup scripts embed arch and sysroot flags into
+# CC/CXX (e.g., CC="arm-oe-linux-gnueabi-gcc -march=armv7ve --sysroot=...").
+# The OE SDK's cmake uses OEToolchainConfig.cmake which reads CFLAGS/CXXFLAGS
+# from the environment but ignores the flags embedded in CC. This causes
+# arch flags like -mfloat-abi=hard to be lost, breaking cross-compilation.
+#
+# Fix: extract the embedded flags from CC/CXX and prepend them to CFLAGS/
+# CXXFLAGS so the OE toolchain picks them up. Also split CC/CXX to just the
+# compiler binary for non-OE builds where we pass -DCMAKE_C_COMPILER.
+TARGET_CC_FULL="${CC:-}"
+TARGET_CXX_FULL="${CXX:-}"
+TARGET_CC=""
+TARGET_CXX=""
+TARGET_CC_EXTRA=""
+TARGET_CXX_EXTRA=""
+TARGET_LDFLAGS="${LDFLAGS:-}"
+
+# Split compiler binary (first word) from embedded flags (remaining words)
+if [ -n "${TARGET_CC_FULL}" ]; then
+  read -ra _CC_PARTS <<< "${TARGET_CC_FULL}"
+  TARGET_CC="${_CC_PARTS[0]}"
+  TARGET_CC_EXTRA="${_CC_PARTS[*]:1}"
+fi
+
+if [ -n "${TARGET_CXX_FULL}" ]; then
+  read -ra _CXX_PARTS <<< "${TARGET_CXX_FULL}"
+  TARGET_CXX="${_CXX_PARTS[0]}"
+  TARGET_CXX_EXTRA="${_CXX_PARTS[*]:1}"
+fi
+
+# Prepend arch flags extracted from CC/CXX into CFLAGS/CXXFLAGS environment.
+# This ensures the OE toolchain file (which reads CFLAGS/CXXFLAGS) gets the
+# arch flags, and also works for non-OE cmake builds via -DCMAKE_C_FLAGS.
+if [ -n "${TARGET_CC_EXTRA}" ]; then
+  export CFLAGS="${TARGET_CC_EXTRA} ${CFLAGS:-}"
+fi
+if [ -n "${TARGET_CXX_EXTRA}" ]; then
+  export CXXFLAGS="${TARGET_CXX_EXTRA} ${CXXFLAGS:-}"
+fi
 TARGET_CFLAGS="${CFLAGS:-}"
 TARGET_CXXFLAGS="${CXXFLAGS:-}"
-TARGET_LDFLAGS="${LDFLAGS:-}"
 
 # Parse arguments
 for arg in "$@"; do
@@ -165,24 +200,28 @@ CMAKE_ARGS=(
   -DTARGET_LIB32_VERSION="${TARGET_LIB32}"
 )
 
-# Add compiler settings if provided (Yocto cross-compilation)
-if [ -n "${TARGET_CC}" ]; then
-  CMAKE_ARGS+=(-DCMAKE_C_COMPILER="${TARGET_CC}")
-fi
-if [ -n "${TARGET_CXX}" ]; then
-  CMAKE_ARGS+=(-DCMAKE_CXX_COMPILER="${TARGET_CXX}")
-fi
-
-# Add flags if provided (Yocto sysroot, target-specific flags)
-if [ -n "${TARGET_CFLAGS}" ]; then
-  CMAKE_ARGS+=(-DCMAKE_C_FLAGS="${TARGET_CFLAGS}")
-fi
-if [ -n "${TARGET_CXXFLAGS}" ]; then
-  CMAKE_ARGS+=(-DCMAKE_CXX_FLAGS="${TARGET_CXXFLAGS}")
-fi
-if [ -n "${TARGET_LDFLAGS}" ]; then
-  CMAKE_ARGS+=(-DCMAKE_EXE_LINKER_FLAGS="${TARGET_LDFLAGS}")
-  CMAKE_ARGS+=(-DCMAKE_SHARED_LINKER_FLAGS="${TARGET_LDFLAGS}")
+# When OE SDK cmake is used, the OEToolchainConfig.cmake handles compiler,
+# sysroot, and flags from the environment. We've already prepended the arch
+# flags from CC/CXX into CFLAGS/CXXFLAGS, so the toolchain picks them up.
+#
+# For non-OE builds (no CMAKE_TOOLCHAIN_FILE), pass explicit cmake -D args.
+if [ -z "${CMAKE_TOOLCHAIN_FILE:-}" ]; then
+  if [ -n "${TARGET_CC}" ]; then
+    CMAKE_ARGS+=(-DCMAKE_C_COMPILER="${TARGET_CC}")
+  fi
+  if [ -n "${TARGET_CXX}" ]; then
+    CMAKE_ARGS+=(-DCMAKE_CXX_COMPILER="${TARGET_CXX}")
+  fi
+  if [ -n "${TARGET_CFLAGS}" ]; then
+    CMAKE_ARGS+=(-DCMAKE_C_FLAGS="${TARGET_CFLAGS}")
+  fi
+  if [ -n "${TARGET_CXXFLAGS}" ]; then
+    CMAKE_ARGS+=(-DCMAKE_CXX_FLAGS="${TARGET_CXXFLAGS}")
+  fi
+  if [ -n "${TARGET_LDFLAGS}" ]; then
+    CMAKE_ARGS+=(-DCMAKE_EXE_LINKER_FLAGS="${TARGET_LDFLAGS}")
+    CMAKE_ARGS+=(-DCMAKE_SHARED_LINKER_FLAGS="${TARGET_LDFLAGS}")
+  fi
 fi
 
 # Run CMake configuration

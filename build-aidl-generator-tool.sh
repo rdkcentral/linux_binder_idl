@@ -109,10 +109,20 @@ mkdir -p "${OUT_DIR}/bin"
 
 echo "==> Configuring CMake for host AIDL tools..."
 
-# Force CMAKE to use native compilers for host tools
-CMAKE_C_COMPILER="${HOST_CC}" \
-CMAKE_CXX_COMPILER="${HOST_CXX}" \
+# Force native host build: override any cross-compilation settings.
+# In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)
+# and CFLAGS/CXXFLAGS (with --sysroot for ARM) are set for the TARGET.
+# Host tools MUST build natively, so we override these via cmake -D flags
+# without modifying the environment variables themselves.
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
+  -DCMAKE_TOOLCHAIN_FILE="" \
+  -DCMAKE_C_COMPILER="${HOST_CC}" \
+  -DCMAKE_CXX_COMPILER="${HOST_CXX}" \
+  -DCMAKE_C_FLAGS="" \
+  -DCMAKE_CXX_FLAGS="" \
+  -DCMAKE_EXE_LINKER_FLAGS="" \
+  -DCMAKE_SHARED_LINKER_FLAGS="" \
+  -DCMAKE_SYSROOT="" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DBUILD_HOST_AIDL=ON
 

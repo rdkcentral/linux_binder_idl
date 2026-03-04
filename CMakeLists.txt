@@ -72,6 +72,34 @@ set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
 set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
 
 ###########################################################
+# Stage android kernel headers (linux/, asm/, asm-generic/)
+# so <linux/android/binder.h> resolves to the project's copy
+# instead of the host system's /usr/include version.
+# Only kernel UAPI headers are staged — NOT musl C library
+# headers — to avoid conflicts with the host's glibc.
+###########################################################
+set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+    set(_SYSROOT_ARCH "x86_64-linux-musl")
+else()
+    set(_SYSROOT_ARCH "i686-linux-musl")
+endif()
+set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
+
+if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
+    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
+         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
+endif()
+
+# Prioritize project kernel headers over system /usr/include/linux/
+include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
+
+###########################################################
 find_package(PkgConfig)
 
 ###########################################################
@@ -168,8 +196,11 @@ if (BUILD_WITHOUT_LIBLOG)
     set(BUILD_WITH_LIBLOG OFF)
 endif ()
 
-# Set default binder library as 32 bit
-set(TARGET_LIB32_VERSION ON)
+# Set default binder library as 32 bit (ARM userspace target)
+# Use conditional set so -DTARGET_LIB32_VERSION=OFF can override for future 64-bit
+if (NOT DEFINED TARGET_LIB32_VERSION)
+    set(TARGET_LIB32_VERSION ON)
+endif()
 if (TARGET_LIB64_VERSION)
     message("Building 64bit binder library")
     set(TARGET_LIB32_VERSION OFF)
