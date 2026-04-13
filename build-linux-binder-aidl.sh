@@ -69,6 +69,7 @@ OUT_DIR="${ROOT_DIR}/out/target"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 TARGET_LIB32="${TARGET_LIB32_VERSION:-ON}"
 CLEAN_BUILD=false
+FORCE_BUILD=false
 BUILD_HOST_AIDL_TOOL=true
 
 # Cross-compilation handling:
@@ -121,9 +122,13 @@ for arg in "$@"; do
     --clean|clean)
       CLEAN_BUILD=true
       ;;
+    --force|force)
+      FORCE_BUILD=true
+      ;;
     --help|-h|help)
-      echo "Usage: $0 [clean] [no-host-aidl] [help]"
+      echo "Usage: $0 [clean] [force] [no-host-aidl] [help]"
       echo "  clean          Remove all build artifacts and source directories (android/, build-*, out/)"
+      echo "  force          Force rebuild of binder libraries (wipes build dir, keeps android sources)"
       echo "  no-host-aidl   Skip building the host AIDL generator tool"
       echo "  help           Show this help message"
       exit 0
@@ -153,6 +158,7 @@ echo "Target CFLAGS:   ${TARGET_CFLAGS:-none}"
 echo "Target CXXFLAGS: ${TARGET_CXXFLAGS:-none}"
 echo "Target LDFLAGS:  ${TARGET_LDFLAGS:-none}"
 echo "Clean build:     ${CLEAN_BUILD}"
+echo "Force build:     ${FORCE_BUILD}"
 echo "Build host AIDL: ${BUILD_HOST_AIDL_TOOL}"
 echo "=========================================="
 
@@ -174,6 +180,12 @@ if [ "$CLEAN_BUILD" = true ]; then
   echo "    Cleaned: ${ROOT_DIR}/android"
   echo "✅ Complete clean finished"
   exit 0
+fi
+
+if [ "$FORCE_BUILD" = true ]; then
+  echo "==> Force rebuild: removing binder build directory (android sources kept)..."
+  rm -rf "${BUILD_DIR}" 2>/dev/null || true
+  echo "    Cleaned: ${BUILD_DIR}"
 fi
 
 # Remove stale in-source CMake artifacts from legacy builds.
