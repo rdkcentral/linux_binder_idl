@@ -111,11 +111,8 @@ fi
 # ------------------------------------------------------------------------------
 # 1) Ensure Binder SDK is built
 # ------------------------------------------------------------------------------
-BUILD_ARGS=()
-[ "${FORCE}" -eq 1 ] && BUILD_ARGS+=("--force")
-
 LOGI "Building Binder SDK..."
-"${SCRIPT_DIR}/build-linux-binder-aidl.sh" "${BUILD_ARGS[@]}"
+"${SCRIPT_DIR}/build-linux-binder-aidl.sh"
 
 # ------------------------------------------------------------------------------
 # 2) Build AIDL generator tool (host compiler)
@@ -171,6 +168,7 @@ fi
 # ------------------------------------------------------------------------------
 # 4) Configure & build examples
 # ------------------------------------------------------------------------------
+[ "${FORCE}" -eq 1 ] && rm -rf "${EXAMPLE_BUILD_DIR}"
 mkdir -p "${EXAMPLE_BUILD_DIR}"
 cd "${EXAMPLE_BUILD_DIR}"
 

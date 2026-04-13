@@ -38,7 +38,7 @@ set -euo pipefail
 #   CXXFLAGS       - C++ compiler flags
 #   LDFLAGS        - Linker flags
 #   BUILD_TYPE     - Debug or Release (default: Release)
-#   TARGET_LIB32_VERSION - Set to ON for 32-bit target (default: OFF for 64-bit)
+#   TARGET_LIB32_VERSION - Set to OFF to build 64-bit target (default: ON for 32-bit)
 #
 # Options:
 #   clean          - Remove all build artifacts and source directories (android/, build-*, out/)
