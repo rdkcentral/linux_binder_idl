@@ -26,7 +26,7 @@
 cmake_minimum_required (VERSION 3.8)
 
 set(PACKAGE_NAME          "linux-binder-idl")
-set(PACKAGE_VERSION       "1.0.0")
+set(PACKAGE_VERSION       "2.0.0")
 set(ANDROID_VERSION       "android-13.0.0_r74")
 set(PACKAGE_STRING        "${PACKAGE_NAME} ${PACKAGE_VERSION}")
 
