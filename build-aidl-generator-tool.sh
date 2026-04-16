@@ -35,7 +35,7 @@ set -euo pipefail
 #   BUILD_TYPE         - Debug or Release (default: Release)
 #
 # Options:
-#   --clean        - Clean build and output directories before building
+#   --clean        - Remove all build artifacts and source directories (android/, build-*, out/)
 #
 # Note: This ALWAYS builds for the HOST architecture (build machine).
 #       CC/CXX environment variables are IGNORED (may be target cross-compilers).
@@ -53,18 +53,18 @@ CLEAN_BUILD=false
 # Parse arguments
 for arg in "$@"; do
   case "$arg" in
-    --clean)
+    --clean|clean)
       CLEAN_BUILD=true
       ;;
-    --help|-h)
-      echo "Usage: $0 [--clean] [--help]"
-      echo "  --clean  Clean build and output directories before building"
-      echo "  --help   Show this help message"
+    --help|-h|help)
+      echo "Usage: $0 [clean] [help]"
+      echo "  clean  Remove all build artifacts and source directories (android/, build-*, out/)"
+      echo "  help   Show this help message"
       exit 0
       ;;
     *)
       echo "Unknown option: $arg"
-      echo "Use --help for usage information"
+      echo "Use 'help' for usage information"
       exit 1
       ;;
   esac
@@ -89,36 +89,48 @@ echo "Clean build:     ${CLEAN_BUILD}"
 echo "=========================================="
 
 if [ "$CLEAN_BUILD" = true ]; then
-  echo "==> Cleaning build and output directories..."
-  rm -rf "${BUILD_DIR}" "${OUT_DIR}" 2>/dev/null || true
+  echo "==> Cleaning all build artifacts and source directories..."
+  rm -rf "${BUILD_DIR}" 2>/dev/null || true
   echo "    Cleaned: ${BUILD_DIR}"
-  echo "    Cleaned: ${OUT_DIR}"
-  echo "✅ Clean complete"
+  rm -rf "${ROOT_DIR}/out" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/out"
+  rm -rf "${ROOT_DIR}/build-host" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/build-host"
+  rm -rf "${ROOT_DIR}/build-target" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/build-target"
+  rm -rf "${ROOT_DIR}/android" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/android"
+  echo "✅ Complete clean finished"
   exit 0
 fi
 
 mkdir -p "${BUILD_DIR}"
 mkdir -p "${OUT_DIR}/bin"
 
-pushd "${BUILD_DIR}" > /dev/null
-
 echo "==> Configuring CMake for host AIDL tools..."
 
-# Force CMAKE to use native compilers for host tools
-CMAKE_C_COMPILER="${HOST_CC}" \
-CMAKE_CXX_COMPILER="${HOST_CXX}" \
-cmake "${ROOT_DIR}" \
+# Force native host build: override any cross-compilation settings.
+# In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)
+# and CFLAGS/CXXFLAGS (with --sysroot for ARM) are set for the TARGET.
+# Host tools MUST build natively, so we override these via cmake -D flags
+# without modifying the environment variables themselves.
+cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
+  -DCMAKE_TOOLCHAIN_FILE="" \
+  -DCMAKE_C_COMPILER="${HOST_CC}" \
+  -DCMAKE_CXX_COMPILER="${HOST_CXX}" \
+  -DCMAKE_C_FLAGS="" \
+  -DCMAKE_CXX_FLAGS="" \
+  -DCMAKE_EXE_LINKER_FLAGS="" \
+  -DCMAKE_SHARED_LINKER_FLAGS="" \
+  -DCMAKE_SYSROOT="" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-  -DBUILD_CORE_SDK=ON \
   -DBUILD_HOST_AIDL=ON
 
 echo "==> Building host AIDL compiler (and required libraries)..."
-cmake --build . --target aidl aidl-cpp -- -j"$(nproc)"
+cmake --build "${BUILD_DIR}" --target aidl aidl-cpp -- -j"$(nproc)"
 
 echo "==> Installing to ${OUT_DIR}..."
-cp aidl aidl-cpp "${OUT_DIR}/bin/"
-
-popd > /dev/null
+cp "${BUILD_DIR}/aidl" "${BUILD_DIR}/aidl-cpp" "${OUT_DIR}/bin/"
 
 echo ""
 echo "✅ Host AIDL tools built successfully"

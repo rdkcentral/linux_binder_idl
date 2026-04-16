@@ -513,3 +513,38 @@ index a579442..47fb4c8 100644
  #include <map>
  #include <optional>
  #include <thread>
+diff --git a/libs/binder/binder_module.h b/libs/binder/binder_module.h
+index 793795e..2a9c8ef 100644
+--- a/libs/binder/binder_module.h
++++ b/libs/binder/binder_module.h
+@@ -38,6 +38,12 @@
+ #define BR_FROZEN_REPLY _IO('r', 18)
+ #endif // BR_FROZEN_REPLY
+ 
++/*
++ * Skip struct definitions - modern kernel headers already have them.
++ * These fallback definitions are only for very old kernels (pre-5.16).
++ * Since we require kernel 5.16+, we don't need these fallback definitions.
++ */
++#if 0
+ #ifndef BINDER_FREEZE
+ /*
+  * Temporary definitions for freeze support. For the final version
+@@ -64,8 +70,6 @@ struct binder_freeze_info {
+ #endif // BINDER_FREEZE
+ 
+ #ifndef BINDER_GET_FROZEN_INFO
+-
+-#define BINDER_GET_FROZEN_INFO _IOWR('b', 15, struct binder_frozen_status_info)
+ 
+ struct binder_frozen_status_info {
+     //
+@@ -87,6 +91,8 @@ struct binder_frozen_status_info {
+     __u32 async_recv;
+ };
+ #endif // BINDER_GET_FROZEN_INFO
++#endif // #if 0 - Disabled fallback definitions
++#define BINDER_GET_FROZEN_INFO _IOWR('b', 15, struct binder_frozen_status_info)
+ 
+ #ifndef BR_ONEWAY_SPAM_SUSPECT
+ // Temporary definition of BR_ONEWAY_SPAM_SUSPECT. For production

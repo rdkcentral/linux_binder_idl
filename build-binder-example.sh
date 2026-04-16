@@ -49,15 +49,15 @@ CLEAN_AIDL=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--force] [--clean] [--help]
+Usage: $(basename "$0") [force] [clean] [clean-aidl] [help]
 
 Build binder example binaries that link against the target Binder SDK.
 
 Options:
-  --force         Force rebuild of Binder SDK and examples.
-  --clean         Remove examples build directory (and clean Binder SDK as well).
-  --clean-aidl    Remove generated AIDL C++ files (requires regeneration).
-  --help          Show this help and exit.
+  force         Force rebuild of Binder SDK and examples.
+  clean         Remove examples build directory (and clean Binder SDK as well).
+  clean-aidl    Remove generated AIDL C++ files (requires regeneration).
+  help          Show this help and exit.
 
 Environment:
   WORK_DIR       Root of repo.
@@ -68,10 +68,10 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --force) FORCE=1 ;;
-    --clean) CLEAN=1 ;;
-    --clean-aidl) CLEAN_AIDL=1 ;;
-    --help)  usage; exit 0 ;;
+    --force|force) FORCE=1 ;;
+    --clean|clean) CLEAN=1 ;;
+    --clean-aidl|clean-aidl) CLEAN_AIDL=1 ;;
+    --help|-h|help)  usage; exit 0 ;;
     *) LOGE "Unknown option: $1"; usage; exit 1 ;;
   esac
   shift
@@ -100,7 +100,7 @@ if [ "${CLEAN}" -eq 1 ]; then
   LOGW "Cleaning binder example build directory..."
   rm -rf "${EXAMPLE_BUILD_DIR}"
   LOGI "✓ Example build directory cleaned"
-  
+
   # Also clean SDK if requested
   LOGI "Cleaning Binder SDK..."
   "${SCRIPT_DIR}/build-linux-binder-aidl.sh" --clean
@@ -134,11 +134,11 @@ if [ ! -d "$FWMANAGER_GEN_DIR" ] || [ -z "$(ls -A "$FWMANAGER_GEN_DIR" 2>/dev/nu
   LOGW ""
   LOGW "    Regenerating will modify tracked files in the repository."
   LOGW ""
-  
+
   if [ -t 0 ]; then  # Check if stdin is a terminal (interactive)
     read -r -p "    Do you want to generate C++ code from .aidl files? [y/N] " response
     case "$response" in
-      [yY][eE][sS]|[yY]) 
+      [yY][eE][sS]|[yY])
         LOGI "Proceeding with C++ code generation..."
         ;;
       *)
@@ -151,16 +151,16 @@ if [ ! -d "$FWMANAGER_GEN_DIR" ] || [ -z "$(ls -A "$FWMANAGER_GEN_DIR" 2>/dev/nu
     LOGE "Use --clean-aidl explicitly to regenerate tracked files"
     exit 1
   fi
-  
+
   # Set AIDL_BIN for the generate script (host tools, not target)
   export AIDL_BIN="${OUT_DIR}/host/bin/aidl"
-  
+
   if [ ! -x "$AIDL_BIN" ]; then
     LOGE "AIDL compiler not found at $AIDL_BIN"
     LOGE "Please build AIDL generator tool first"
     exit 1
   fi
-  
+
   "${SCRIPT_DIR}/example/generate_cpp.sh"
   LOGI "✓ C++ code generation complete"
   LOGW "⚠️  Remember to review and commit changes to generated files"
@@ -171,6 +171,7 @@ fi
 # ------------------------------------------------------------------------------
 # 4) Configure & build examples
 # ------------------------------------------------------------------------------
+[ "${FORCE}" -eq 1 ] && rm -rf "${EXAMPLE_BUILD_DIR}"
 mkdir -p "${EXAMPLE_BUILD_DIR}"
 cd "${EXAMPLE_BUILD_DIR}"
 

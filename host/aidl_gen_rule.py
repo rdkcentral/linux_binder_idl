@@ -284,7 +284,11 @@ def gen_cpp_sources(interface_name,
 
     logger.verbose("AIDL Gen Command: %s" %(aidl_gen_cmd))
 
-    subprocess.call(aidl_gen_cmd, shell=True)
+    result = subprocess.call(aidl_gen_cmd, shell=True)
+    if result != 0:
+        logger.error("AIDL compilation failed for %s version %s with exit code %d"
+                     % (interface.base_name, gen_version, result))
+        raise RuntimeError("AIDL compilation failed with exit code %d" % result)
 
 
 def handle_source_gen(interface_name,

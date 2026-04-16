@@ -29,7 +29,7 @@
 # Usage: ./generate_cpp.sh [--clean]
 #
 # Options:
-#   --clean    Remove existing generated files before regenerating
+#   clean    Remove existing generated files before regenerating
 # ==============================================================================
 
 set -e
@@ -66,8 +66,8 @@ echo "Output Dir:    $GEN_DIR"
 echo "========================================"
 echo ""
 
-# Handle --clean flag
-if [ "${1:-}" = "--clean" ]; then
+# Handle clean flag (both --clean and clean)
+if [ "${1:-}" = "--clean" ] || [ "${1:-}" = "clean" ]; then
     echo "Cleaning existing generated files..."
     rm -rf "$GEN_DIR"
     echo "✓ Cleaned"
@@ -93,7 +93,7 @@ for aidl_file in "${AIDL_FILES[@]}"; do
         "$AIDL_DIR/$aidl_file" \
         --header_out "$GEN_DIR/include" \
         -o "$GEN_DIR"
-    
+
     if [ $? -ne 0 ]; then
         echo "❌ Error: Failed to generate code for $aidl_file"
         exit 1

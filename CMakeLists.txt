@@ -46,13 +46,67 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Default to Release for single-config generators unless explicitly set.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+
+###########################################################
+# Set all the path variables (must be before any checks)
+###########################################################
+set(LINUX_BINDER_AIDL_ROOT "${CMAKE_CURRENT_LIST_DIR}")
+set(LINUX_BINDER_AIDL_ROOT_OUT "${CMAKE_CURRENT_LIST_DIR}/out")
+if(NOT EXISTS ${LINUX_BINDER_AIDL_ROOT_OUT})
+    file(MAKE_DIRECTORY ${LINUX_BINDER_AIDL_ROOT_OUT})
+endif()
+
+set(ANDROID_DIR "${CMAKE_CURRENT_LIST_DIR}/android")
+
+set(ANDROID_LOGGING_DIR ${ANDROID_DIR}/logging)
+set(ANDROID_BASE_DIR ${ANDROID_DIR}/libbase)
+set(ANDROID_CORE_DIR ${ANDROID_DIR}/core)
+set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
+set(ANDROID_FMTLIB_DIR ${ANDROID_DIR}/fmtlib)
+set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
+set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
+
+###########################################################
+# Stage android kernel headers (linux/, asm/, asm-generic/)
+# so <linux/android/binder.h> resolves to the project's copy
+# instead of the host system's /usr/include version.
+# Only kernel UAPI headers are staged — NOT musl C library
+# headers — to avoid conflicts with the host's glibc.
+###########################################################
+set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+    set(_SYSROOT_ARCH "x86_64-linux-musl")
+else()
+    set(_SYSROOT_ARCH "i686-linux-musl")
+endif()
+set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
+
+if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
+    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
+         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
+endif()
+
+# Prioritize project kernel headers over system /usr/include/linux/
+include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
+
+###########################################################
 find_package(PkgConfig)
 
 ###########################################################
 # High-level build switches
 ###########################################################
 # Build the Core SDK: Android libraries + servicemanager
-option(BUILD_CORE_SDK "Build Android Binder Core SDK (libs + servicemanager)" ON)
+# Always enabled because the AIDL compiler depends on these libraries.
 
 # Build the host AIDL compiler (x86_64 or native host)
 # This is the "aidl compiler / aidl generator" host tool.
@@ -105,6 +159,8 @@ add_compile_options(
     -Wno-return-type               # Missing return statements in switch/if chains
     -w                             # Suppress ALL warnings (AOSP third-party code)
     -fno-strict-aliasing           # Disable strict aliasing (required for AOSP wire formats)
+    -U_FORTIFY_SOURCE              # Disable bionic FORTIFY (uses Clang __overloadable)
+    -D__ANDROID_API__=30           # Set Android API level for bionic features
 )
 
 # C++ specific warnings
@@ -140,8 +196,11 @@ if (BUILD_WITHOUT_LIBLOG)
     set(BUILD_WITH_LIBLOG OFF)
 endif ()
 
-# Set default binder library as 32 bit
-set(TARGET_LIB32_VERSION ON)
+# Set default binder library as 32 bit (ARM userspace target)
+# Use conditional set so -DTARGET_LIB32_VERSION=OFF can override for future 64-bit
+if (NOT DEFINED TARGET_LIB32_VERSION)
+    set(TARGET_LIB32_VERSION ON)
+endif()
 if (TARGET_LIB64_VERSION)
     message("Building 64bit binder library")
     set(TARGET_LIB32_VERSION OFF)
@@ -158,7 +217,7 @@ endif()
 
 set(ANDROID_DIR "${CMAKE_CURRENT_LIST_DIR}/android")
 
-set(ANDOIRD_LOGGING_DIR ${ANDROID_DIR}/logging)
+set(ANDROID_LOGGING_DIR ${ANDROID_DIR}/logging)
 set(ANDROID_BASE_DIR ${ANDROID_DIR}/libbase)
 set(ANDROID_CORE_DIR ${ANDROID_DIR}/core)
 set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
@@ -170,7 +229,7 @@ set(BINDER_DIR ${ANDROID_NATIVE_DIR}/libs/binder)
 set(LIBUTILS_DIR ${ANDROID_CORE_DIR}/libutils)
 set(LIBCUTILS_DIR ${ANDROID_CORE_DIR}/libcutils)
 set(LIBBASE_DIR ${ANDROID_BASE_DIR})
-set(LIBLOG_DIR ${ANDOIRD_LOGGING_DIR}/liblog)
+set(LIBLOG_DIR ${ANDROID_LOGGING_DIR}/liblog)
 set(LIBSYSTEM_DIR ${ANDROID_CORE_DIR}/libsystem)
 set(LIBFMT_DIR ${ANDROID_FMTLIB_DIR})
 set(LIBPROCESSGROUP_DIR ${ANDROID_CORE_DIR}/libprocessgroup)
@@ -252,7 +311,6 @@ endmacro()
 #   - the *target* uses (via libraries + servicemanager)
 #   - the *host* AIDL compiler links against.
 ###########################################################
-if (BUILD_CORE_SDK)
 
     if (BUILD_WITH_LIBLOG)
         ###########################################################
@@ -575,9 +633,13 @@ if (BUILD_CORE_SDK)
         ${BINDER_DIR}/UtilsHost.cpp
     )
 
+if (BUILD_ENV_YOCTO OR NOT BUILD_HOST_AIDL)
     if (BUILD_ENV_YOCTO)
         message("Yocto environment")
-        message("Using generated prebuilt stubs and proxies")
+    else ()
+        message("Host/Generic environment for Core SDK binder (production)")
+    endif ()
+    message("Using generated prebuilt stubs and proxies")
 
         set(BINDER_AIDL_SRCS
             ${BINDER_AIDL_GEN_DIR}/android/os/IServiceManager.cpp
@@ -615,7 +677,7 @@ if (BUILD_CORE_SDK)
         )
 
         # NOTE: This dependency only applies when building AIDL in the same CMake tree
-        # If BUILD_HOST_AIDL is OFF, the generator uses an external 'aidl' from PATH
+        # BUILD_HOST_AIDL is ON in this branch, so the aidl target is available.
         if (BUILD_HOST_AIDL)
             add_dependencies(binder aidl)
         endif ()
@@ -635,8 +697,6 @@ if (BUILD_CORE_SDK)
         ${LIBFMT_DIR}/include
         ${LIBSYSTEM_DIR}/include
         ${LIBPROCESSGROUP_DIR}/include/
-        ${ANDROID_DIR}/bionic/libc/kernel/uapi
-        ${ANDROID_DIR}/bionic/libc/kernel/android/uapi
     )
 
     if (TARGET_LIB32_VERSION)
@@ -721,13 +781,12 @@ if (BUILD_CORE_SDK)
         )
     endif ()
 
-endif() # BUILD_CORE_SDK
 
 ###########################################################
 # Host AIDL compiler (aidl / aidl-cpp) – host tool only
 #
 # This is the AIDL compiler / generator. It assumes that the
-# Core SDK is present in this build (BUILD_CORE_SDK ON) and
+# Core SDK is present in this build and
 # reuses libbase, liblog, libcutils, etc instead of rebuilding.
 #
 # In the future, a target AIDL build (BUILD_TARGET_AIDL) would

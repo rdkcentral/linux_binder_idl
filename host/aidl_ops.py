@@ -259,7 +259,11 @@ def main(argv):
     elif _operation == "generate_source":
         logger.verbose("\tGen Directory    = %s" %(_gen_dir))
         logger.verbose("\tGen Version      = %s" %(_gen_version))
-        handle_aidl_gen_rule()
+        try:
+            handle_aidl_gen_rule()
+        except RuntimeError as e:
+            logger.error("Source generation failed: %s" % str(e))
+            sys.exit(1)
     elif _operation == "generate_deps":
         handle_aidl_gen_deps()
 
