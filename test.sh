@@ -656,6 +656,14 @@ test_11() {
                 print_fail "Expected ARM binary, got: $file_output"
             fi
         fi
+
+        # TODO: Remove this cleanup once out/ and build/ are arch-tagged
+        # (e.g. out/<arch>/, build/<arch>/). Currently ./build-target and
+        # ./out/target are shared across host and cross builds — the ARM
+        # CMakeCache written inside the rdk-kirkstone container references
+        # an OE toolchain path that does not exist on the native host,
+        # which breaks the next native build (see test_12).
+        clean_build_state
     else
         print_fail "SC Docker cross-compilation failed"
         tail -30 /tmp/docker_cross_build.log | tee -a "${TEST_LOG}"
