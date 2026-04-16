@@ -83,10 +83,11 @@ class Logger:
             self._print(Fore.YELLOW, level, msg)
             return
         elif level == self.INFO or level == self.DEBUG or level == self.VERBOSE:
-            self._print(Fore.BLACK, level, msg)
+            # Use Fore.RESET to use the user's terminal default (usually white/grey)
+            self._print(Fore.RESET, level, msg) 
             return
         else:
-            self._print(Fore.BLACK, self.VERBOSE, msg)
+            self._print(Fore.RESET, self.VERBOSE, msg)
             return
 
     def _print(self, fore, level, msg):

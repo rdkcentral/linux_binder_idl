@@ -20,15 +20,57 @@ cmake_minimum_required(VERSION 3.8)
 
 project(Interface_Libraries)
 
+#######################################################################
+# Root and output defaults
+#
+# Callers *may* override:
+#   -DLINUX_BINDER_AIDL_ROOT=/path/to/repo
+#   -DLINUX_BINDER_AIDL_ROOT_OUT=/path/to/out
+#   -DHOST_AIDL_DIR=/path/to/host/aidl_compiler
+#
+# If they are not provided:
+#   - LINUX_BINDER_AIDL_ROOT     → inferred from this file location
+#   - LINUX_BINDER_AIDL_ROOT_OUT → ${LINUX_BINDER_AIDL_ROOT}/out
+#   - HOST_AIDL_DIR              → ${LINUX_BINDER_AIDL_ROOT_OUT}/host/aidl_compiler
+#######################################################################
+
+# Derive repo root if not provided
+if (NOT DEFINED LINUX_BINDER_AIDL_ROOT)
+    # Assume this file sits under <repo>/host or <repo>/something/host
+    get_filename_component(_this_dir "${CMAKE_CURRENT_LIST_DIR}" ABSOLUTE)
+    # Go one level up by default (adjust if your layout is different)
+    get_filename_component(LINUX_BINDER_AIDL_ROOT "${_this_dir}/.." ABSOLUTE)
+    message(STATUS "LINUX_BINDER_AIDL_ROOT not set, defaulting to ${LINUX_BINDER_AIDL_ROOT}")
+else()
+    message(STATUS "LINUX_BINDER_AIDL_ROOT explicitly set to ${LINUX_BINDER_AIDL_ROOT}")
+endif()
+
+# Derive out/ root if not provided
+if (NOT DEFINED LINUX_BINDER_AIDL_ROOT_OUT)
+    set(LINUX_BINDER_AIDL_ROOT_OUT "${LINUX_BINDER_AIDL_ROOT}/out")
+    message(STATUS "LINUX_BINDER_AIDL_ROOT_OUT not set, defaulting to ${LINUX_BINDER_AIDL_ROOT_OUT}")
+else()
+    message(STATUS "LINUX_BINDER_AIDL_ROOT_OUT explicitly set to ${LINUX_BINDER_AIDL_ROOT_OUT}")
+endif()
+
+# Derive host AIDL compiler root if not provided
+if (NOT DEFINED HOST_AIDL_DIR)
+    set(HOST_AIDL_DIR "${LINUX_BINDER_AIDL_ROOT_OUT}/host/aidl_compiler")
+    message(STATUS "HOST_AIDL_DIR not set, defaulting to ${HOST_AIDL_DIR}")
+else()
+    message(STATUS "HOST_AIDL_DIR explicitly set to ${HOST_AIDL_DIR}")
+endif()
 
 #######################################################################
-# Set required path variabiles.
-# LINUX_BINDER_AIDL_ROOT and LINUX_BINDER_AIDL_ROOT_OUT need to be set
-# before including this script
+# Internal paths used by this helper
 #######################################################################
-set(LINUX_BINDER_AIDL_ROOT_HOST ${LINUX_BINDER_AIDL_ROOT}/host)
-set(AIDL_TOOL ${LINUX_BINDER_AIDL_ROOT}/local/bin/aidl)
-set(INTERFACE_LIB_DEPS_FILE ${LINUX_BINDER_AIDL_ROOT_OUT}/dependencies.txt)
+set(LINUX_BINDER_AIDL_ROOT_HOST "${HOST_AIDL_DIR}")
+set(INTERFACE_LIB_DEPS_FILE "${LINUX_BINDER_AIDL_ROOT_OUT}/dependencies.txt")
+
+# If SDK_LIB_DIR is provided, tell the linker to look there
+if (DEFINED SDK_LIB_DIR)
+    link_directories(${SDK_LIB_DIR})
+endif()
 
 #######################################################################
 # Set path for interfaces root directories
@@ -51,22 +93,6 @@ message(STATUS "Interface Root Directories: ${interfaces_dir}")
 
 
 #######################################################################
-# Check if required host tool, aidl, is compiled. If mot compile it.
-#######################################################################
-#if(EXISTS ${AIDL_TOOL})
-#    message(STATUS "using aidl tool from ${AIDL_TOOL}")
-#else()
-#    message(STATUS "Compiling aidl at ${AIDL_TOOL}")
-#    execute_process(
-#        COMMAND cmake -B ${LINUX_BINDER_AIDL_ROOT_OUT} -S ${LINUX_BINDER_AIDL_ROOT}/aidl-generator -D CMAKE_INSTALL_PREFIX=${LINUX_BINDER_AIDL_ROOT_OUT}/host
-#    )
-#    execute_process(
-#        COMMAND make -C ${LINUX_BINDER_AIDL_ROOT_OUT} install -j `nproc`
-#    )
-#endif()
-
-
-#######################################################################
 # Generate Libraries dependency tree associated to interfaces available
 # in given interfaces.
 # Read this dependency tree and set it to aidl_targets
@@ -74,8 +100,9 @@ message(STATUS "Interface Root Directories: ${interfaces_dir}")
 # dependency variable: com.rdk.hal-v1-cpp_deps
 #######################################################################
 message(STATUS "Generating Interfaces Libraries Dependencies at ${INTERFACE_LIB_DEPS_FILE}")
+# Changed to use aidl_ops.py directly (no symlink dependence)
 execute_process(
-    COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops -a -r ${interfaces_dir}
+    COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -a -r ${interfaces_dir} -o ${LINUX_BINDER_AIDL_ROOT_OUT}
 )
 
 set(aidl_targets)
@@ -83,12 +110,13 @@ set(aidl_targets)
 function (read_interfaces_lib_dependencies filename)
     if(EXISTS ${filename})
         file(READ ${filename} content)
-        message(STATUS "Dependency Tree \n${content}")
+        message(STATUS "Dependency Tree \n\t${content}")
     else()
         message(FATAL_ERROR "Interfaces Libraries dependency tree not found. Interfaces are not available")
     endif()
 
     string(REGEX MATCHALL "([-a-zA-Z0-9_.]+):([-a-zA-Z0-9_. ]*)" matches ${content})
+    
     foreach(match ${matches})
         string(REGEX REPLACE "([-a-zA-Z0-9_.]+):([-a-zA-Z0-9_. ]*)" "\\1" lib ${match})
         string(REGEX REPLACE "([-a-zA-Z0-9_.]+):([-a-zA-Z0-9_. ]*)" "\\2" deps ${match})
@@ -132,40 +160,143 @@ function(AddInterfaceLibrary aidl_target)
     message(STATUS "Target: ${aidl_target}, Dependencies: ${${aidl_target}_deps}")
 
     foreach(dep IN LISTS ${aidl_target}_deps)
-        message(STATUS "DEP: ${dep}")
+        message(VERBOSE "DEP: ${dep}")
         AddInterfaceLibrary(${dep})
     endforeach()
 
     list(GET interfaces_dir 0 first_interfaces_root)
-    set(source_dir ${first_interfaces_root}/stable/generated/${interface_name}/src/${interface_version})
-    set(include_dir ${first_interfaces_root}/stable/generated/${interface_name}/include/${interface_version})
+    
+    # Use LINUX_BINDER_AIDL_ROOT_OUT directly - parent project provides the complete path
+    set(source_dir ${LINUX_BINDER_AIDL_ROOT_OUT}/${interface_name}/${interface_version}/src)
+    set(include_dir ${LINUX_BINDER_AIDL_ROOT_OUT}/${interface_name}/${interface_version}/include)
 
-    # Generate Sources
-    message(STATUS "Command: ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops -g ${interface_version_arg} -r ${interfaces_dir} ${interface_name}")
-    execute_process(
-        COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops -g ${interface_version_arg} -r "${interfaces_dir}" ${interface_name}
+    # Check if generated sources already exist (pre-committed in repo)
+    file(GLOB_RECURSE existing_sources "${source_dir}/*.cpp")
+    
+    if(NOT existing_sources)
+        # Generated code doesn't exist - need to run API update first
+        message(STATUS "No pre-generated sources found for ${interface_name} v${interface_version}")
+        message(STATUS "Generating sources using aidl_ops...")
+        
+        # Generate Sources
+        message(VERBOSE "Command: ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r ${interfaces_dir} -o ${LINUX_BINDER_AIDL_ROOT_OUT} ${interface_name}")
+        execute_process(
+            COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r "${interfaces_dir}" -o "${LINUX_BINDER_AIDL_ROOT_OUT}" ${interface_name}
+            RESULT_VARIABLE gen_result
         )
-    file(GLOB_RECURSE source_files "${source_dir}/*.cpp")
+        
+        if(NOT gen_result EQUAL 0)
+            message(FATAL_ERROR "Failed to generate sources for ${interface_name}. Run './build_interfaces.sh ${interface_name}' first.")
+        endif()
+        
+        # Re-check after generation
+        file(GLOB_RECURSE source_files "${source_dir}/*.cpp")
+        if(NOT source_files)
+            message(FATAL_ERROR "Source generation completed but no C++ files found in ${source_dir}")
+        endif()
+    else()
+        list(LENGTH existing_sources list_length)
+        message(STATUS "Using pre-generated sources for ${interface_name} v${interface_version} (${list_length} files)")
+        set(source_files ${existing_sources})
+    endif()
+    
+    # Post-process generated headers to add missing #include <mutex>
+    # AIDL code generator creates Bp*.h files that use std::mutex without including <mutex>
+    file(GLOB_RECURSE bp_headers "${include_dir}/**/Bp*.h")
+    foreach(header_file ${bp_headers})
+        file(READ "${header_file}" header_content)
+        # Only add if not already present
+        string(FIND "${header_content}" "#include <mutex>" has_mutex)
+        if(has_mutex EQUAL -1)
+            string(REGEX REPLACE "(#pragma once\n)" "\\1#include <mutex>\n" header_content "${header_content}")
+            file(WRITE "${header_file}" "${header_content}")
+        endif()
+    endforeach()
 
-    message(STATUS "adding target ${aidl_target} as a library")
+
+    message(VERBOSE "adding target ${aidl_target} as a library")
     add_library(
         ${aidl_target} SHARED ${source_files}
         )
-    target_include_directories(
-        ${aidl_target} PUBLIC ${include_dir}
+
+    # [FIX 2] Dual Mode Include Logic (SDK vs Internal)
+    if (DEFINED SDK_INCLUDE_DIR)
+        # Mode A: SDK Mode (Clean)
+        set(FINAL_INCLUDE_DIRS ${SDK_INCLUDE_DIR})
+    else()
+        # Mode B: Internal Mode (Raw Headers)
+        # Calculate root of the toolchain relative to this file
+        get_filename_component(TOOLCHAIN_ROOT "${CMAKE_CURRENT_LIST_DIR}/../" ABSOLUTE)
+        
+        set(FINAL_INCLUDE_DIRS
+            "${TOOLCHAIN_ROOT}/android/native/libs/binder/ndk/include_cpp"
+            "${TOOLCHAIN_ROOT}/android/native/libs/binder/include"
+            "${TOOLCHAIN_ROOT}/android/native/include"
+            "${TOOLCHAIN_ROOT}/android/libbase/include"
+            "${TOOLCHAIN_ROOT}/android/core/libutils/include"
+            "${TOOLCHAIN_ROOT}/android/logging/liblog/include"
+            "${TOOLCHAIN_ROOT}/android/core/libcutils/include"
         )
+    endif()
+
+    target_include_directories(
+        ${aidl_target} PUBLIC 
+        ${include_dir}
+        ${FINAL_INCLUDE_DIRS}
+    )
+
     target_link_libraries(
         ${aidl_target} PUBLIC "${${aidl_target}_deps}"
         binder
         utils
     )
+
     target_compile_options(${aidl_target} PUBLIC
-    -Wall -Wextra -std=c++20
+        -Wall 
+        -Wextra 
+        -std=gnu++17           # Use GNU extensions instead of strict ISO C++17
+        
+        # --- GCC COMPATIBILITY FLAGS ---
+        -Wno-unknown-pragmas   # Silences "#pragma clang diagnostic..."
+        -Wno-attributes        # Silences "[[clang::lto_visibility_public]]"
+        -Wno-psabi             # Silences common ARM ABI warnings (optional)
+        -Wno-write-strings     # Silence string literal to char* warnings from AIDL
+        -Wno-return-type       # Silence missing return warnings from AIDL code
     )
+    
+    # Force include missing headers for AIDL-generated code
+    target_compile_definitions(${aidl_target} PRIVATE
+        _GLIBCXX_INCLUDE_NEXT_C_HEADERS  # Ensure C++ standard headers are available
+    )
+
     install(TARGETS
         ${aidl_target}
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
+
+    # [FIX 3] Generate Portable CMakeLists.txt for clients
+    set(STANDALONE_CMAKE_CONTENT "
+cmake_minimum_required(VERSION 3.8)
+project(${aidl_target})
+
+# The Consumer MUST provide the SDK location
+if (NOT DEFINED SDK_INCLUDE_DIR)
+    message(FATAL_ERROR \"SDK_INCLUDE_DIR is not defined.\\n\"
+            \"To build this library independently, you must provide the path to the RDK Android SDK headers.\\n\"
+            \"Example: cmake -DSDK_INCLUDE_DIR=/path/to/sdk/include .\")
+endif()
+
+include_directories(\${SDK_INCLUDE_DIR})
+
+file(GLOB_RECURSE SRC_FILES \"src/*.cpp\")
+
+add_library(${aidl_target} SHARED \${SRC_FILES})
+target_include_directories(${aidl_target} PUBLIC \"include\")
+")
+
+    # Write the portable file to the output directory provided by parent
+    file(WRITE "${LINUX_BINDER_AIDL_ROOT_OUT}/${interface_name}/${interface_version}/CMakeLists.txt" "${STANDALONE_CMAKE_CONTENT}")
+
 endfunction()
 
 
@@ -223,29 +354,47 @@ function(target_build_interfaces_libraries)
                 AddInterfaceLibrary(${aidl_target})
             endforeach()
         else ()
-            # TODO
             # Build all versions of given target
             message(STATUS, "Build all versions of given target, ${INTERFACE_TARGET}")
+            foreach(aidl_target IN LISTS aidl_targets)
+                # Match "xxxx-v1-cpp", "xxxx-vcurrent-cpp", etc.
+                if (aidl_target MATCHES "^${INTERFACE_TARGET}-v.*")
+                    AddInterfaceLibrary(${aidl_target})
+                endif()
+            endforeach()
         endif()
     elseif (${INTERFACE_VERSION} STREQUAL "current")
         if (${INTERFACE_TARGET} STREQUAL  "all")
-            # TODO
             # Build all interface libraries for current version
-            message(STATUS, "Build all interface libraries for current version")
+            message(VERBOSE, "Build all interface libraries for current version")
+            foreach(aidl_target IN LISTS aidl_targets)
+                if (aidl_target MATCHES "-vcurrent-cpp$")
+                    AddInterfaceLibrary(${aidl_target})
+                endif()
+            endforeach()
         else()
-            # TODO
             # Build current versions of given target
-            message(STATUS, "Build current versions of given target, ${INTERFACE_TARGET}")
+            message(VERBOSE, "Build current versions of given target, ${INTERFACE_TARGET}")
+            set(target_name "${INTERFACE_TARGET}-vcurrent-cpp")
+            if (${target_name} IN_LIST aidl_targets)
+                AddInterfaceLibrary(${target_name})
+            else()
+                message(FATAL_ERROR "Target ${target_name} not found in dependencies.")
+            endif()
         endif()
     elseif (${INTERFACE_VERSION} STREQUAL "latest")
         if (${INTERFACE_TARGET} STREQUAL  "all")
-            # TODO
             # Build all interface libraries for last frozen version
-            message(STATUS, "Build all interface libraries for last frozen version")
+            message(VERBOSE, "Build all interface libraries for last frozen version")
+             foreach(aidl_target IN LISTS aidl_targets)
+                if (NOT aidl_target MATCHES "-vcurrent-cpp$")
+                    AddInterfaceLibrary(${aidl_target})
+                endif()
+            endforeach()
         else()
-            # TODO
             # Build latest versions of given target
             message(STATUS, "Build latest versions of given target, ${INTERFACE_TARGET}")
+            message(FATAL_ERROR "To build a specific frozen version, use -DINTERFACE_VERSION=<number>")
         endif() 
     else ()
         if (${INTERFACE_TARGET} STREQUAL  "all")

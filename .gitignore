@@ -1,4 +1,21 @@
+build-production
+test_build.log
+Makefile
+build-target-cmake
+CMakeCache.txt
+CMakeFiles/
+camke_install.cmake
+build-host
+build-target
+build-aidl-generator
+test_build.logcMakeCache.
+.installed_successfully
+.android_source_ready
 android/
 */**/*.pyc
 local/
 out/
+cmake_install.cmake
+# Generated AIDL code for examples - regenerate with example/generate_cpp.sh
+example/**/gen/
+example/stable/generated/

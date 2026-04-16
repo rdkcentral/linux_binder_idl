@@ -23,7 +23,7 @@
 cmake_minimum_required (VERSION 3.8)
 
 set(PACKAGE_NAME          "binder-example")
-set(PACKAGE_VERSION       "1.0.0")
+set(PACKAGE_VERSION       "2.0.0")
 set(ANDROID_VERSION       "android-13.0.0_r74")
 set(PACKAGE_STRING        "${PACKAGE_NAME} ${PACKAGE_VERSION}")
 
@@ -50,7 +50,8 @@ if (NOT DEFINED CMAKE_POSITION_INDEPENDENT_CODE)
     message("Set PIC Option")
     set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 endif ()
-
+# Suppress warnings from SDK headers about clang-specific attributes
+add_compile_options(-Wno-attributes)
 # Use prebuilt generated stubs and proxies
 set(USE_PREBUILT_GEN_FILES ON)
 if (BUILD_USING_AIDL_UTILITY)

@@ -78,9 +78,8 @@ def make_api_dump_as_version(interface,
         copy_cmd = "if [ \"$(cat %s)\" = \"1\" ]; then " %(has_development)
         copy_cmd = copy_cmd + "mkdir -p %s && " %(target_dir)
         copy_cmd = copy_cmd + "cp -rf %s/. %s;" %(dump.api_dir, target_dir)
-        if not interface.dump_api:
-            # When dump_api is disabled, need to remove the interface definition file
-            copy_cmd = copy_cmd + "rm -f %s/interface.yaml %s/interface.json;" %(target_dir, target_dir)
+        # Always remove the interface definition file from versioned APIs
+        copy_cmd = copy_cmd + "rm -f %s/interface.yaml %s/interface.json;" %(target_dir, target_dir)
         copy_cmd = copy_cmd + "fi"
         logger.verbose(copy_cmd)
         subprocess.call(copy_cmd, shell=True)
@@ -191,89 +190,13 @@ def update_hash_for_current_api(interface):
     hashgen_version = aidl_interface.version_for_hashgen(interface.next_version())
     api_dump_dir = aidl_interface.get_versioned_dir(interface, CURRENT_VERSION)
     hash_file = path.join(api_dump_dir, ".hash")
+    
+    # Remove existing hash file to avoid appending (aidl_hash_gen uses >>)
+    if path.exists(hash_file):
+        os.remove(hash_file)
+    
     hash_gen_cmd = [CMD_AIDL_HASH_GEN, api_dump_dir, hashgen_version, hash_file]
     subprocess.call(hash_gen_cmd)
-
-
-def create_api_dump_from_source(interface, interfaces, is_freeze_api=False):
-    """
-    Creates api dump from the sources at the ToT (top of tree)
-
-    This API dump will be used for validations and other operations
-
-    Args:
-        interface: AIDL interface for which api dump needs
-            to be created.
-        interfaces: All available interfaces
-
-    Return:
-        tot_api_dump: API dump details
-    """
-    version = interface.next_version()
-
-    if not path.exists(interface.interface_api_dir_out):
-        os.makedirs(interface.interface_api_dir_out)
-
-    api_dump_dir = path.join(interface.interface_api_dir_out, "dump")
-    if path.exists(api_dump_dir):
-        shutil.rmtree(api_dump_dir, ignore_errors=True)
-    os.makedirs(api_dump_dir)
-
-    hash_file = path.join(interface.interface_api_dir_out, "dump", ".hash")
-    hashgen_version = aidl_interface.version_for_hashgen(version)
-
-    # Get Input Files
-    srcs = aidl_interface.get_path_for_files(interface.interface_root,
-            interface.srcs)
-
-    if srcs == None or len(srcs) == 0:
-        assert False, "No sources found for in %s for %s" \
-                %(interface.interface_root, interface.srcs)
-    logger.verbose("Input Files: %s" %(srcs))
-
-    optional_flags = []
-    if interface.stability != "unstable":
-        optional_flags.append("--stability=%s" %(interface.stability))
-
-    # get dependent preprocessed interfaces from imports
-    deps, imports, _ = aidl_interface.get_dependencies(interface,
-            interfaces, version, is_freeze_api)
-    logger.verbose("Dependencies for %s: deps: %s, imports: %s" \
-            %(interface.base_name, deps, imports))
-    if len(deps) > 0:
-        optional_flags.extend([f'-p{dep}' for dep in deps])
-
-    # aidl and aidl_hash_gencommand to dump tot apis, these apis will
-    # be checked against frozen and updated apis
-    dump_cmd = [CMD_AIDL,
-            "--dumpapi",
-            "--structured",
-            "-I"+interface.interface_root,
-            "--out",
-            api_dump_dir]
-    dump_cmd.extend(optional_flags)
-    dump_cmd.extend(srcs)
-    hash_gen_cmd = [CMD_AIDL_HASH_GEN, api_dump_dir, hashgen_version, hash_file]
-
-    logger.verbose("Dump API Command: %s" %(dump_cmd))
-    logger.verbose("Hash Gen Command: %s" %(hash_gen_cmd))
-
-    if not exec_cmd(dump_cmd):
-        # TODO: Does it always fail because of unresolved dependencies
-        aidl_interface.show_dep_error(interface.base_name)
-        assert False, "command failed"
-
-    subprocess.call(hash_gen_cmd)
-
-    # Output Files
-    api_files = aidl_interface.get_path_for_files(api_dump_dir,
-            "*.aidl")
-    if api_files == None or len(api_files) == 0:
-        assert False, "Failed to dump APIs for %s" %(interface.base_name)
-
-    logger.verbose("Output Files: %s" %(api_files))
-
-    return ApiDump(version, api_dump_dir, api_files, hash_file)
 
 
 def handle_update_api(interface_name, interfaces):
@@ -281,29 +204,77 @@ def handle_update_api(interface_name, interfaces):
 
     interface = interfaces[interface_name]
 
-    if not interface.dump_api:
-        logger.info("update_api is not supported for %s. dump api is disabled" %(interface.base_name))
-        return
+    logger.verbose("Running %s-%s" %(interface.base_name, "update_api"))
 
-    # An API dump is created from source as tot_api_dump(Top of the Tree
-    # API dump)  and it is compared against the API dump of the current
-    tot_api_dump = \
-            create_api_dump_from_source(
-                                    interface,
-                                    interfaces)
-
-    logger.info("Running %s-%s" %(interface.base_name, "update_api"))
-
-    # API dump from source is updated to the 'current' version.
-    # Triggered by `aidl_ops -u <interface name>`
-    make_api_dump_as_version(interface, tot_api_dump,
-            CURRENT_VERSION, None)
+    # Copy AIDL source files from {module}/current/ to stable/aidl/{module}/current/
+    current_api_dir = aidl_interface.get_versioned_dir(interface, CURRENT_VERSION)
+    
+    # PRE-COPY VALIDATION: Check compatibility BEFORE overwriting existing stable/aidl/
+    # ONLY enforce compatibility if frozen versions exist (v1, v2, etc.)
+    # If no frozen versions, current/ is free development - any changes allowed
+    if path.exists(current_api_dir) and aidl_interface.has_frozen_versions(interface):
+        logger.info("Pre-validating compatibility before updating %s" %(interface.base_name))
+        logger.info("Frozen versions exist - enforcing backward compatibility")
+        
+        # Get existing stable API dump for comparison (OLD)
+        existing_stable_dump = ApiDump(
+            interface.next_version(),
+            current_api_dir,
+            aidl_interface.get_path_for_files(current_api_dir, "*.aidl", True),
+            path.join(current_api_dir, ".hash")
+        )
+        
+        # Create temporary API dump from source files (NEW)
+        # Note: We use interface.interface_root directly since AIDL files are already there
+        source_aidl_files = aidl_interface.get_path_for_files(
+            interface.interface_root, "*.aidl", True)
+        temp_source_dump = ApiDump(
+            interface.next_version(),
+            interface.interface_root,  # Use source directory directly
+            source_aidl_files,
+            None  # No hash file for source
+        )
+        
+        # Check compatibility: new source must be compatible with existing stable
+        try:
+            logger.verbose("Checking compatibility: source vs existing stable")
+            aidl_interface.check_compatibility(interface, interfaces, 
+                                              existing_stable_dump, temp_source_dump)
+            logger.info("Pre-validation passed: source changes are backward-compatible")
+        except (AssertionError, RuntimeError) as e:
+            logger.error("Pre-validation FAILED: Source changes are incompatible with existing stable API")
+            logger.error("Error: %s" %(str(e)))
+            logger.error("")
+            logger.error("Breaking changes are NOT allowed in AIDL versioned interfaces.")
+            logger.error("You can only ADD methods/fields/enums at the end.")
+            logger.error("To make breaking changes, create a new interface (e.g., I%sNew)" %(interface.base_name.capitalize()))
+            logger.error("")
+            logger.error("Please revert your changes or create a new interface component.")
+            raise RuntimeError("Compatibility validation failed - aborting update to prevent data corruption")
+    elif path.exists(current_api_dir):
+        logger.info("Pre-validation skipped for %s - no frozen versions yet (current/ is free development)" %(interface.base_name))
+        # Optional: Log what changed for developer awareness
+        logger.verbose("Changes detected since last update (informational only):")
+        # Note: Could add diff summary here if desired
+    else:
+        logger.info("First update for %s - skipping pre-validation" %(interface.base_name))
+    
+    # Create target directory
+    os.makedirs(current_api_dir, exist_ok=True)
+    
+    # Copy AIDL files from source to stable/aidl/{module}/current/
+    logger.verbose("Copying AIDL files from %s to %s" %(interface.interface_root, current_api_dir))
+    copy_cmd = "rsync -a --include='*/' --include='*.aidl' --exclude='*' %s/ %s/" %(interface.interface_root, current_api_dir)
+    subprocess.call(copy_cmd, shell=True)
+    
+    # Generate/update hash for the current version in stable/aidl/{module}/current/
+    update_hash_for_current_api(interface)
 
     # Validating interface after updating current API.
     # Check 1: Integrity
     #           Frozen APIs are not modified after freezing
     # Check 2: Compatibility
-    #           All frozen versions and the current one are backword
+    #           All frozen versions and the current one are backward
     #           compatible
     # Note: Check 3 and 4 are not required in case of update API
     api_dumps = aidl_interface.validate_interface(interface, interfaces)
@@ -314,43 +285,24 @@ def handle_freeze_api(interface_name, interfaces):
 
     interface = interfaces[interface_name]
 
-    # An API dump is created from source as
-    # tot_api_dump(Top of the Tree API dump)  and it is compared against
-    # the API dump of the current
-    tot_api_dump = None
-    if interface.dump_api:
-        tot_api_dump = \
-                create_api_dump_from_source(
-                                        interface,
-                                        interfaces,
-                                        is_freeze_api=True)
-
-    logger.info("Running %s-%s" %(interface.base_name, "freeze_api"))
+    logger.verbose("Running %s-%s" %(interface.base_name, "freeze_api"))
 
     # Check 1: Integrity
     #           Frozen APIs are not modified after freezing
     # Check 2: Compatibility
-    #           All frozen versions and the current one are backword
+    #           All frozen versions and the current one are backward
     #           compatible
     api_dumps = aidl_interface.validate_interface(interface, interfaces)
 
     # Check 3: Equality
-    #           tot_api_dump is compared against the API dump of the
-    #           'current' (yet-to-be-finalized) version.
-    #           By checking this we enforce that any change in the AIDL
-    #           interface is gated by the AIDL API review even before
-    #           the interface is frozen as a new version.
+    #           Current API hash is updated/verified
     current_api_dir = aidl_interface.get_versioned_dir(interface,
             CURRENT_VERSION)
     current_api_dump = None
     if len(api_dumps) > 0 and \
             api_dumps[len(api_dumps)-1].version == interface.next_version():
         current_api_dump = api_dumps[len(api_dumps)-1]
-        if interface.dump_api:
-            checked = aidl_interface.check_equality(interface, interfaces,
-                    current_api_dump, tot_api_dump)
-        else:
-            update_hash_for_current_api(interface)
+        update_hash_for_current_api(interface)
     else:
         # The "current" directory might not exist, in case when the
         # interface is first created.
@@ -370,20 +322,13 @@ def handle_freeze_api(interface_name, interfaces):
     # Check 4: Updated
     #           Check for active development on the unfrozen version
     global has_development
-    if interface.dump_api:
-        has_development = aidl_interface.check_for_development(interface, interfaces, latest_version_dump, tot_api_dump)
-    else:
-        has_development = aidl_interface.check_for_development(interface, interfaces, latest_version_dump, current_api_dump)
+    has_development = aidl_interface.check_for_development(interface, interfaces, latest_version_dump, current_api_dump)
 
-    # Additional Check for dependencies when dump_api is disabled
-    if not interface.dump_api:
-        dependecies_check_for_freeze(interface, interfaces)
+    # Additional Check for dependencies
+    dependecies_check_for_freeze(interface, interfaces)
 
-    # API dump from source is frozen as the next stable version. Triggered by `m <name>-freeze-api`
-    if interface.dump_api:
-        make_api_dump_as_version(interface, tot_api_dump, interface.next_version(), has_development)
-    else:
-        make_api_dump_as_version(interface, current_api_dump, interface.next_version(), has_development)
+    # API from current version is frozen as the next stable version. Triggered by freeze_api command
+    make_api_dump_as_version(interface, current_api_dump, interface.next_version(), has_development)
     append_version(interface, interfaces, interface.next_version())
 
 

@@ -141,19 +141,10 @@ def get_aidl_files_for_imports(interface, interfaces, imports_dir, import_interf
     imports_dir_tot = []
 
     # Identify files in which we can look for imports
-    if interface.dump_api:
-        # if Dump api is enabled, provided sources won't have import statement
-        # get them from top of the tree aidls
-        search_srcs = aidl_interface.get_path_for_files(interface.interface_root, interface.srcs)
-        for import_interface in import_interfaces:
-            name, _, _ = import_interface.partition("-v")
-            imports_dir_tot.append(interfaces[name].interface_root)
-    else:
-        # if dump api is disabled, provided sources will have all required import statements
-        search_srcs = srcs
+    # Sources will have all required import statements
+    search_srcs = srcs
     logger.verbose("Sources to Search for imports = %s" %(search_srcs))
     logger.verbose("Imports Locations = %s" %(imports_dir))
-    logger.verbose("Imports Location ToT = %s" %(imports_dir_tot))
 
     # get all Imports
     pattern = r'import\s+([\w\.]+);'
@@ -216,12 +207,8 @@ def gen_cpp_sources(interface_name,
 
     if gen_dir is None:
         logger.debug("Generating sources at default Location")
-        gen_dir = path.join(interface.interface_gen_dir,
-                    "src",
-                    "%s" %(version_dir))
-        gen_dir_inc = path.join(interface.interface_gen_dir,
-                    "include",
-                    "%s" %(version_dir))
+        gen_dir = path.join(interface.interface_gen_dir, "%s" %(version_dir), "src")
+        gen_dir_inc = path.join(interface.interface_gen_dir, "%s" %(version_dir), "include")
     else:
         gen_dir_inc = path.join(gen_dir, "include")
 
@@ -297,7 +284,11 @@ def gen_cpp_sources(interface_name,
 
     logger.verbose("AIDL Gen Command: %s" %(aidl_gen_cmd))
 
-    subprocess.call(aidl_gen_cmd, shell=True)
+    result = subprocess.call(aidl_gen_cmd, shell=True)
+    if result != 0:
+        logger.error("AIDL compilation failed for %s version %s with exit code %d"
+                     % (interface.base_name, gen_version, result))
+        raise RuntimeError("AIDL compilation failed with exit code %d" % result)
 
 
 def handle_source_gen(interface_name,

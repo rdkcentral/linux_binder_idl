@@ -119,7 +119,7 @@ def handle_aidl_api():
 
 
 def handle_aidl_gen_rule():
-    logger.verbose("handle %s" %(_operation))
+    logger.debug("handle %s" %(_operation))
     aidl_gen_rule.aidl_gen_rule(
             _interface_name,
             _interfaces_roots,
@@ -130,7 +130,7 @@ def handle_aidl_gen_rule():
 
 
 def handle_aidl_gen_deps():
-    logger.verbose("handle %s" %(_operation))
+    logger.debug("handle %s" %(_operation))
     aidl_gen_rule.aidl_gen_deps(
             _interfaces_roots,
             _out_dir
@@ -239,14 +239,14 @@ def main(argv):
 
     # check if aidl tool is available. If not generate it.
     if not path.exists(CMD_AIDL):
-        logger.info("AIDL tool not found, Installation Script: %s" %(CMD_GEN_AIDL))
+        logger.error("AIDL tool not found, Installation Script: %s" %(CMD_GEN_AIDL))
         exec_cmd([CMD_GEN_AIDL])
 
     if not path.exists(CMD_AIDL):
         logger.error("Could not generate AIDL tool")
         sys.exit(1)
     else:
-        logger.info("Installed aidl at %s" %(CMD_AIDL))
+        logger.debug("Installed aidl at %s" %(CMD_AIDL))
 
     logger.debug("aidl_ops:")
     logger.debug  ("\tOperation        = %s" %(_operation))
@@ -259,7 +259,11 @@ def main(argv):
     elif _operation == "generate_source":
         logger.verbose("\tGen Directory    = %s" %(_gen_dir))
         logger.verbose("\tGen Version      = %s" %(_gen_version))
-        handle_aidl_gen_rule()
+        try:
+            handle_aidl_gen_rule()
+        except RuntimeError as e:
+            logger.error("Source generation failed: %s" % str(e))
+            sys.exit(1)
     elif _operation == "generate_deps":
         handle_aidl_gen_deps()
 

@@ -26,7 +26,8 @@
 
 set(FWMANAGER_SERVICE_DIR ${FWMANAGER_DIR}/service)
 set(FWMANAGER_CLIENT_DIR ${FWMANAGER_DIR}/client)
-set(FWMANAGER_GEN_DIR ${FWMANAGER_DIR}/gen)
+# Generated files are in stable/generated/FWManager/
+set(FWMANAGER_GEN_DIR ${CMAKE_SOURCE_DIR}/stable/generated/FWManager)
 
 ###########################################################
 # FWManager Service

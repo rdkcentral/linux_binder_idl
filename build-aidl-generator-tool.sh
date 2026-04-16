@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 #/**
 # * Copyright 2024 Comcast Cable Communications Management, LLC
@@ -7,7 +7,7 @@
 # * you may not use this file except in compliance with the License.
 # * You may obtain a copy of the License at
 # *
-# * http://www.apache.org/licenses/LICENSE-2.0
+# *     http://www.apache.org/licenses/LICENSE-2.0
 # *
 # * Unless required by applicable law or agreed to in writing, software
 # * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,54 +18,121 @@
 # * SPDX-License-Identifier: Apache-2.0
 # */
 
-# ** @brief : Build aidl utility for host machine.
-# *
-# * Following are the execution state flow of this build script
-# *    1) Clone the android binder repositories from list ${REPOSITORIES}
-# *       to the tag ${TAG}=android-13.0.0_r74
-# *    2) The patches will be applied from ./patches/
-# *    3) Call cmake to build the aidl generator tool for linux.
-# *       The aidl utility is used to generate stubs and proxies form .aidl file.
-# *       Following are the generated binaries and libraries
-# *           aidl
-# *           libbase
-# *	      liblog	
-# *    4) The generated bins and libs will be installed in ${INSTALL_DIR}.
-# *
+set -euo pipefail
 
-linux_binder_dir=$(dirname "$(realpath "$0")")
-. ${linux_binder_dir}/setup-env.sh
-if [ $? -ne 0 ]; then
-    LOGE "Failed to export environments"
-    exit 1
+# -------------------------------------------------------------------
+# build-aidl-generator-tool.sh
+#
+# Builds ONLY the host AIDL compiler tools (aidl, aidl-cpp)
+# These run on the build machine to generate code.
+#
+# Output: out/host/
+#   - bin/aidl
+#   - bin/aidl-cpp
+#
+# Build Variables:
+#   HOST_CC, HOST_CXX  - Host compiler (default: gcc/g++ for native architecture)
+#   BUILD_TYPE         - Debug or Release (default: Release)
+#
+# Options:
+#   --clean        - Remove all build artifacts and source directories (android/, build-*, out/)
+#
+# Note: This ALWAYS builds for the HOST architecture (build machine).
+#       CC/CXX environment variables are IGNORED (may be target cross-compilers).
+#       Use HOST_CC/HOST_CXX to override native compilers if needed.
+# -------------------------------------------------------------------
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+ROOT_DIR="${SCRIPT_DIR}"
+
+BUILD_DIR="${ROOT_DIR}/build-host"
+OUT_DIR="${ROOT_DIR}/out/host"
+BUILD_TYPE="${BUILD_TYPE:-Release}"
+CLEAN_BUILD=false
+
+# Parse arguments
+for arg in "$@"; do
+  case "$arg" in
+    --clean|clean)
+      CLEAN_BUILD=true
+      ;;
+    --help|-h|help)
+      echo "Usage: $0 [clean] [help]"
+      echo "  clean  Remove all build artifacts and source directories (android/, build-*, out/)"
+      echo "  help   Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg"
+      echo "Use 'help' for usage information"
+      exit 1
+      ;;
+  esac
+done
+
+# Force native x86_64 compilers for host tools
+# Host tools MUST run on the build machine, not the target
+# Ignore any cross-compilation environment (Yocto CC/CXX)
+HOST_CC="${HOST_CC:-gcc}"
+HOST_CXX="${HOST_CXX:-g++}"
+
+echo "=========================================="
+echo "  Building AIDL Host Tools"
+echo "=========================================="
+echo "Root dir:        ${ROOT_DIR}"
+echo "Build dir:       ${BUILD_DIR}"
+echo "Output dir:      ${OUT_DIR}"
+echo "Build type:      ${BUILD_TYPE}"
+echo "Host CC:         ${HOST_CC}"
+echo "Host CXX:        ${HOST_CXX}"
+echo "Clean build:     ${CLEAN_BUILD}"
+echo "=========================================="
+
+if [ "$CLEAN_BUILD" = true ]; then
+  echo "==> Cleaning all build artifacts and source directories..."
+  rm -rf "${BUILD_DIR}" 2>/dev/null || true
+  echo "    Cleaned: ${BUILD_DIR}"
+  rm -rf "${ROOT_DIR}/out" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/out"
+  rm -rf "${ROOT_DIR}/build-host" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/build-host"
+  rm -rf "${ROOT_DIR}/build-target" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/build-target"
+  rm -rf "${ROOT_DIR}/android" 2>/dev/null || true
+  echo "    Cleaned: ${ROOT_DIR}/android"
+  echo "✅ Complete clean finished"
+  exit 0
 fi
-LOGI "Successfully setup environments"
 
-clone_android_binder_repo
-if [ $? -ne 0 ]; then
-    LOGE "Failed to clone android repos"
-    exit 2
-fi
-LOGI "Successfully cloned android repos"
+mkdir -p "${BUILD_DIR}"
+mkdir -p "${OUT_DIR}/bin"
 
-build_aidl_generator_tool
-if [ $? -ne 0 ]; then
-    LOGE "Failed to build aidl generator tool"
-    exit 3
-fi
-LOGI "Successfully build aidl generator tool"
+echo "==> Configuring CMake for host AIDL tools..."
 
-LOGI "Creating aidl generator tool tar ball"
-AIDL_GENERATOR_TARBALL="aidl-gen-tool-android-13.0.0_r74+1.0.0"
+# Force native host build: override any cross-compilation settings.
+# In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)
+# and CFLAGS/CXXFLAGS (with --sysroot for ARM) are set for the TARGET.
+# Host tools MUST build natively, so we override these via cmake -D flags
+# without modifying the environment variables themselves.
+cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
+  -DCMAKE_TOOLCHAIN_FILE="" \
+  -DCMAKE_C_COMPILER="${HOST_CC}" \
+  -DCMAKE_CXX_COMPILER="${HOST_CXX}" \
+  -DCMAKE_C_FLAGS="" \
+  -DCMAKE_CXX_FLAGS="" \
+  -DCMAKE_EXE_LINKER_FLAGS="" \
+  -DCMAKE_SHARED_LINKER_FLAGS="" \
+  -DCMAKE_SYSROOT="" \
+  -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+  -DBUILD_HOST_AIDL=ON
 
-cd ${INSTALL_DIR}
+echo "==> Building host AIDL compiler (and required libraries)..."
+cmake --build "${BUILD_DIR}" --target aidl aidl-cpp -- -j"$(nproc)"
 
-# Remove unnecessary lib and include directory
-rm -rf ${INSTALL_DIR}/lib/
-rm -rf ${INSTALL_DIR}/include/
+echo "==> Installing to ${OUT_DIR}..."
+cp "${BUILD_DIR}/aidl" "${BUILD_DIR}/aidl-cpp" "${OUT_DIR}/bin/"
 
-# Create aidl generator tool tarball
-tar -cjvf ${AIDL_GENERATOR_TARBALL}.tar.bz2 *
-LOGI "Successfully created the aidl generator tool ${AIDL_GENERATOR_TARBALL} tar ball"
-
-cd ${WORK_DIR}
+echo ""
+echo "✅ Host AIDL tools built successfully"
+echo "   Output: ${OUT_DIR}/bin/aidl"
+echo "   Output: ${OUT_DIR}/bin/aidl-cpp"
