@@ -25,9 +25,12 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/reboot.h>
+
+#include <android-base/unique_fd.h>
 
 #include <binder/IServiceManager.h>
 #include <utils/StrongPointer.h>
@@ -102,6 +105,25 @@ Status FWManager::registerDeviceStateFirmwareUpdateStateChanged(const sp<IFirmwa
     printf("\nFWManager : Register IFirmwareUpdateStateListener\n");
     std::thread threadStartFirmwareUpdate(startFirmwareUpdatethread, listener);
     threadStartFirmwareUpdate.detach();
+
+    return Status::ok();
+}
+
+/*
+ * Gets a file descriptor for reading the firmware update log.
+ * Opens /tmp/fw_update.log (or creates it) and returns the fd to the caller.
+ */
+Status FWManager::getFirmwareLogFile(::android::os::ParcelFileDescriptor* _aidl_return) {
+    const char* logPath = "/tmp/fw_update.log";
+
+    int fd = open(logPath, O_RDONLY | O_CREAT, 0644);
+    if (fd < 0) {
+        printf("\nFWManager : Failed to open firmware log file: %s\n", logPath);
+        return Status::fromServiceSpecificError(-1, String8("Failed to open log file"));
+    }
+
+    printf("\nFWManager : Returning firmware log fd=%d for %s\n", fd, logPath);
+    _aidl_return->reset(android::base::unique_fd(fd));
 
     return Status::ok();
 }

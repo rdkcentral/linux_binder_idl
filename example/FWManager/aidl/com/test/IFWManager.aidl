@@ -25,6 +25,7 @@
 // IFWManager.aidl
 package com.test;
 
+import android.os.ParcelFileDescriptor;
 import com.test.FirmwareStatus;
 import com.test.IFirmwareUpdateStateListener;
 
@@ -54,4 +55,10 @@ interface IFWManager {
      * Registers a listener for firmware update state changes.
      */
     void registerDeviceStateFirmwareUpdateStateChanged(in IFirmwareUpdateStateListener listener) = 404;
+
+    /*
+     * Gets a file descriptor for reading the firmware update log.
+     * Demonstrates ParcelFileDescriptor as a built-in AIDL type.
+     */
+    ParcelFileDescriptor getFirmwareLogFile() = 405;
 }
