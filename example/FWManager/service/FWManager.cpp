@@ -22,6 +22,8 @@
  * Contains the implementation of the FWManager interfaces.
  */
 
+#include <cerrno>
+#include <cstring>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -116,10 +118,10 @@ Status FWManager::registerDeviceStateFirmwareUpdateStateChanged(const sp<IFirmwa
 Status FWManager::getFirmwareLogFile(::android::os::ParcelFileDescriptor* _aidl_return) {
     const char* logPath = "/tmp/fw_update.log";
 
-    int fd = open(logPath, O_RDONLY | O_CREAT, 0644);
+    int fd = open(logPath, O_RDONLY | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0644);
     if (fd < 0) {
-        printf("\nFWManager : Failed to open firmware log file: %s\n", logPath);
-        return Status::fromServiceSpecificError(-1, String8("Failed to open log file"));
+        printf("\nFWManager : Failed to open firmware log file: %s (%s)\n", logPath, strerror(errno));
+        return Status::fromServiceSpecificError(-errno, String8("Failed to open log file"));
     }
 
     printf("\nFWManager : Returning firmware log fd=%d for %s\n", fd, logPath);
