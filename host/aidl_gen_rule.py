@@ -200,7 +200,11 @@ def gen_cpp_sources(interface_name,
         gen_version = interface.next_version()
 
     version_dir = ""
-    if gen_version == interface.next_version():
+    if interface.layout == "module-local":
+        # In module-local layout the version IS the interface's own
+        # directory name (e.g. "current", "0.1.0.0").
+        version_dir = path.basename(interface.interface_root)
+    elif gen_version == interface.next_version():
         version_dir = CURRENT_VERSION
     else:
         version_dir = gen_version

@@ -53,6 +53,18 @@ else()
     message(STATUS "LINUX_BINDER_AIDL_ROOT_OUT explicitly set to ${LINUX_BINDER_AIDL_ROOT_OUT}")
 endif()
 
+# Base directory under which generated <interface>/<version>/{src,include} live.
+# Decoupled from LINUX_BINDER_AIDL_ROOT_OUT (the intermediate out/ dir) so that
+# a consumer using module-local generation can point this at its repo root
+# while keeping intermediate artefacts in a separate out/ tree. Defaults to
+# LINUX_BINDER_AIDL_ROOT_OUT for backwards compatibility.
+if (NOT DEFINED LINUX_BINDER_AIDL_GENERATED_ROOT)
+    set(LINUX_BINDER_AIDL_GENERATED_ROOT "${LINUX_BINDER_AIDL_ROOT_OUT}")
+    message(STATUS "LINUX_BINDER_AIDL_GENERATED_ROOT not set, defaulting to ${LINUX_BINDER_AIDL_GENERATED_ROOT}")
+else()
+    message(STATUS "LINUX_BINDER_AIDL_GENERATED_ROOT explicitly set to ${LINUX_BINDER_AIDL_GENERATED_ROOT}")
+endif()
+
 # Derive host AIDL compiler root if not provided
 if (NOT DEFINED HOST_AIDL_DIR)
     set(HOST_AIDL_DIR "${LINUX_BINDER_AIDL_ROOT_OUT}/host/aidl_compiler")
@@ -166,9 +178,11 @@ function(AddInterfaceLibrary aidl_target)
 
     list(GET interfaces_dir 0 first_interfaces_root)
     
-    # Use LINUX_BINDER_AIDL_ROOT_OUT directly - parent project provides the complete path
-    set(source_dir ${LINUX_BINDER_AIDL_ROOT_OUT}/${interface_name}/${interface_version}/src)
-    set(include_dir ${LINUX_BINDER_AIDL_ROOT_OUT}/${interface_name}/${interface_version}/include)
+    # Generated sources live under LINUX_BINDER_AIDL_GENERATED_ROOT (which
+    # defaults to LINUX_BINDER_AIDL_ROOT_OUT). For module-local consumers this
+    # is the repo root, so the path resolves to <repo>/<module>/<version>/.
+    set(source_dir ${LINUX_BINDER_AIDL_GENERATED_ROOT}/${interface_name}/${interface_version}/src)
+    set(include_dir ${LINUX_BINDER_AIDL_GENERATED_ROOT}/${interface_name}/${interface_version}/include)
 
     # Check if generated sources already exist (pre-committed in repo)
     file(GLOB_RECURSE existing_sources "${source_dir}/*.cpp")
