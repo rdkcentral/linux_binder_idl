@@ -330,11 +330,11 @@ def handle_source_gen(interface_name,
         # Instruct user to create one by executing
         # `aidl_ops -u <interface-name>`.
         logger.error("API dump for the current version of AIDL \
-                interface %s does not exist." %(aidlInterface.baseName))
+                interface %s does not exist." %(interface.base_name))
         logger.fatal("Run \"make %s-update-api\", or add \"stability: \
                 unstable\" to the build rule for the interface if it \
                 does not need to be versioned" \
-                %(aidlInterface.baseName))
+                %(interface.base_name))
 
     if interface.stability == "unstable":
         # TODO: Implement
