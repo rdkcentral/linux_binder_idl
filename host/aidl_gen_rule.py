@@ -345,6 +345,13 @@ def handle_source_gen(interface_name,
         return
 
     if gen_version is not None:
+        if interface.layout == "module-local":
+            # In module-local layout the version is selected by which
+            # interface directory is built, not by a -v flag.
+            logger.fatal("-v/--version is not applicable to module-local "
+                    "interface %s; the version is its own directory (%s)"
+                    %(interface.base_name,
+                      path.basename(interface.interface_root)))
         if int(gen_version) < 1 or \
                 int(gen_version) > int(interface.next_version()):
             logger.error("%s doesn have version %s, latest Available: %s" \

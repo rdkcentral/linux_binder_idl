@@ -206,6 +206,14 @@ def handle_update_api(interface_name, interfaces):
 
     logger.verbose("Running %s-%s" %(interface.base_name, "update_api"))
 
+    # In module-local layout the AIDL sources already live in their versioned
+    # directory - there is no separate central stable/aidl tree to copy into.
+    # update-api would rsync the directory onto itself, so it is a no-op here.
+    if interface.layout == "module-local":
+        logger.info("update-api skipped for %s - module-local layout, AIDL is "
+                "already in place" %(interface.base_name))
+        return
+
     # Copy AIDL source files from {module}/current/ to stable/aidl/{module}/current/
     current_api_dir = aidl_interface.get_versioned_dir(interface, CURRENT_VERSION)
     

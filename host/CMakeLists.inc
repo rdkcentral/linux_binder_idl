@@ -58,6 +58,12 @@ endif()
 # a consumer using module-local generation can point this at its repo root
 # while keeping intermediate artefacts in a separate out/ tree. Defaults to
 # LINUX_BINDER_AIDL_ROOT_OUT for backwards compatibility.
+#
+# Contract: this must resolve to the directory whose generated output the
+# generator actually produces. For module-local layout the generator emits
+# into <interfaces-root>/<interface>/<version>/, so this must be set to that
+# interfaces root. A mismatch is caught loudly by the post-generation source
+# re-check below (FATAL_ERROR "no C++ files found"), never silently.
 if (NOT DEFINED LINUX_BINDER_AIDL_GENERATED_ROOT)
     set(LINUX_BINDER_AIDL_GENERATED_ROOT "${LINUX_BINDER_AIDL_ROOT_OUT}")
     message(STATUS "LINUX_BINDER_AIDL_GENERATED_ROOT not set, defaulting to ${LINUX_BINDER_AIDL_GENERATED_ROOT}")
