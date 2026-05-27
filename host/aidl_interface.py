@@ -176,6 +176,18 @@ def load_interfaces(interfaces_roots, out_dir, gen_dir=None, gen_lib_deps=False)
                 interface_locations.append(path.join(root, INTERFACE_DEF_YAML))
 
     logger.debug("Interfaces found at %s" %(interface_locations))
+    # Stable ordering: walk order from os.walk is filesystem-dependent, but
+    # when a module ships both <module>/current/interface.yaml AND a frozen
+    # snapshot <module>/<x.y.z>/interface.yaml under the same base_name,
+    # the LAST one inserted into the aidl_interfaces dict wins - which
+    # decides where the generator writes its output. Sort with frozen
+    # versions first and "current" last so current always wins, matching
+    # the "build current" intent of the rest of the toolchain (#530).
+    def _interface_sort_key(loc):
+        parent = path.basename(path.dirname(loc))
+        # "current" sorts last; everything else by name
+        return (1 if parent == "current" else 0, parent, loc)
+    interface_locations.sort(key=_interface_sort_key)
     aidl_interfaces = {}
     for interface_loc in interface_locations:
         aidl_interface = AidlInterface(interfaces_roots, path.dirname(interface_loc),

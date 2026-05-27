@@ -190,25 +190,70 @@ function(AddInterfaceLibrary aidl_target)
     set(source_dir ${LINUX_BINDER_AIDL_GENERATED_ROOT}/${interface_name}/${interface_version}/src)
     set(include_dir ${LINUX_BINDER_AIDL_GENERATED_ROOT}/${interface_name}/${interface_version}/include)
 
-    # Check if generated sources already exist (pre-committed in repo)
+    # Regeneration policy (#530, Option A):
+    #   - "current" version: ALWAYS regenerate. The AIDL under <module>/current/
+    #     is mutable and the previous "skip if include/src already populated"
+    #     guard silently shipped stale C++ when the AIDL changed but the
+    #     generated tree happened to exist (e.g. from a prior build or a
+    #     stale checkout). The AIDL compiler overwrites in place, so a
+    #     successful regen brings the tree to byte-equivalent state with
+    #     the AIDL; if a method or type is removed, its primary file is
+    #     overwritten with the new content. Regen is cheap relative to
+    #     compile and eliminates the "ship stale generated code" class of
+    #     bug entirely.
+    #   - Frozen versions (e.g. v1, v2): pre-committed C++ is part of the
+    #     release contract - never regenerate; reuse what's on disk.
     file(GLOB_RECURSE existing_sources "${source_dir}/*.cpp")
-    
-    if(NOT existing_sources)
-        # Generated code doesn't exist - need to run API update first
-        message(STATUS "No pre-generated sources found for ${interface_name} v${interface_version}")
-        message(STATUS "Generating sources using aidl_ops...")
-        
+
+    if (interface_version STREQUAL "current")
+        message(STATUS "Regenerating sources for ${interface_name} v${interface_version} (always-regen, #530)")
+
         # Generate Sources
         message(VERBOSE "Command: ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r ${interfaces_dir} -o ${LINUX_BINDER_AIDL_ROOT_OUT} ${interface_name}")
         execute_process(
             COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r "${interfaces_dir}" -o "${LINUX_BINDER_AIDL_ROOT_OUT}" ${interface_name}
             RESULT_VARIABLE gen_result
         )
-        
+
         if(NOT gen_result EQUAL 0)
             message(FATAL_ERROR "Failed to generate sources for ${interface_name}. Run './build_interfaces.sh ${interface_name}' first.")
         endif()
-        
+
+        # Re-glob after generation; the generator writes <module>/current/{src,include}.
+        file(GLOB_RECURSE source_files "${source_dir}/*.cpp")
+        if(NOT source_files)
+            # Defensive fallback: if regen ran cleanly but produced no files in
+            # the expected location (e.g. a component whose interface loader
+            # maps to a different versioned directory than CMake's "current"
+            # path), fall back to any pre-committed sources so the build
+            # remains usable. This preserves the previous behaviour for those
+            # components without losing the new always-regen guarantee for the
+            # common case.
+            if(existing_sources)
+                list(LENGTH existing_sources list_length)
+                message(WARNING "Regeneration produced no files in ${source_dir}; "
+                                "falling back to ${list_length} pre-committed source(s). "
+                                "Generated C++ may be stale relative to AIDL.")
+                set(source_files ${existing_sources})
+            else()
+                message(FATAL_ERROR "Source generation completed but no C++ files found in ${source_dir}")
+            endif()
+        endif()
+    elseif(NOT existing_sources)
+        # Frozen version with no pre-committed sources - generate once.
+        message(STATUS "No pre-generated sources found for ${interface_name} v${interface_version}")
+        message(STATUS "Generating sources using aidl_ops...")
+
+        message(VERBOSE "Command: ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r ${interfaces_dir} -o ${LINUX_BINDER_AIDL_ROOT_OUT} ${interface_name}")
+        execute_process(
+            COMMAND ${LINUX_BINDER_AIDL_ROOT_HOST}/aidl_ops.py -g ${interface_version_arg} -r "${interfaces_dir}" -o "${LINUX_BINDER_AIDL_ROOT_OUT}" ${interface_name}
+            RESULT_VARIABLE gen_result
+        )
+
+        if(NOT gen_result EQUAL 0)
+            message(FATAL_ERROR "Failed to generate sources for ${interface_name}. Run './build_interfaces.sh ${interface_name}' first.")
+        endif()
+
         # Re-check after generation
         file(GLOB_RECURSE source_files "${source_dir}/*.cpp")
         if(NOT source_files)
