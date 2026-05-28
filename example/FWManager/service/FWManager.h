@@ -34,6 +34,7 @@
 
 #include <android/log.h>
 #include <binder/BinderService.h>
+#include <binder/ParcelFileDescriptor.h>
 #include <binder/Status.h>
 #include <utils/Errors.h>
 #include <utils/Log.h>
@@ -100,6 +101,11 @@ class FWManager : public android::BinderService<FWManager>,
          * Registers a listener for firmware update state changes.
          */
         Status registerDeviceStateFirmwareUpdateStateChanged(const sp<IFirmwareUpdateStateListener>& listener) override;
+
+        /*
+         * Gets a file descriptor for reading the firmware update log.
+         */
+        Status getFirmwareLogFile(::android::os::ParcelFileDescriptor* _aidl_return) override;
 };
 
 #endif //_FW_MANAGER_H_

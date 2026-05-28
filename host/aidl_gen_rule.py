@@ -200,7 +200,11 @@ def gen_cpp_sources(interface_name,
         gen_version = interface.next_version()
 
     version_dir = ""
-    if gen_version == interface.next_version():
+    if interface.layout == "module-local":
+        # In module-local layout the version IS the interface's own
+        # directory name (e.g. "current", "0.1.0.0").
+        version_dir = path.basename(interface.interface_root)
+    elif gen_version == interface.next_version():
         version_dir = CURRENT_VERSION
     else:
         version_dir = gen_version
@@ -330,17 +334,24 @@ def handle_source_gen(interface_name,
         # Instruct user to create one by executing
         # `aidl_ops -u <interface-name>`.
         logger.error("API dump for the current version of AIDL \
-                interface %s does not exist." %(aidlInterface.baseName))
+                interface %s does not exist." %(interface.base_name))
         logger.fatal("Run \"make %s-update-api\", or add \"stability: \
                 unstable\" to the build rule for the interface if it \
                 does not need to be versioned" \
-                %(aidlInterface.baseName))
+                %(interface.base_name))
 
     if interface.stability == "unstable":
         # TODO: Implement
         return
 
     if gen_version is not None:
+        if interface.layout == "module-local":
+            # In module-local layout the version is selected by which
+            # interface directory is built, not by a -v flag.
+            logger.fatal("-v/--version is not applicable to module-local "
+                    "interface %s; the version is its own directory (%s)"
+                    %(interface.base_name,
+                      path.basename(interface.interface_root)))
         if int(gen_version) < 1 or \
                 int(gen_version) > int(interface.next_version()):
             logger.error("%s doesn have version %s, latest Available: %s" \
