@@ -176,6 +176,18 @@ def load_interfaces(interfaces_roots, out_dir, gen_dir=None, gen_lib_deps=False)
                 interface_locations.append(path.join(root, INTERFACE_DEF_YAML))
 
     logger.debug("Interfaces found at %s" %(interface_locations))
+    # Stable ordering: walk order from os.walk is filesystem-dependent, but
+    # when a module ships both <module>/current/interface.yaml AND a frozen
+    # snapshot <module>/<x.y.z>/interface.yaml under the same base_name,
+    # the LAST one inserted into the aidl_interfaces dict wins - which
+    # decides where the generator writes its output. Sort with frozen
+    # versions first and "current" last so current always wins, matching
+    # the "build current" intent of the rest of the toolchain (#530).
+    def _interface_sort_key(loc):
+        parent = path.basename(path.dirname(loc))
+        # "current" sorts last; everything else by name
+        return (1 if parent == "current" else 0, parent, loc)
+    interface_locations.sort(key=_interface_sort_key)
     aidl_interfaces = {}
     for interface_loc in interface_locations:
         aidl_interface = AidlInterface(interfaces_roots, path.dirname(interface_loc),
@@ -348,12 +360,11 @@ def get_preprocessed_dir(interface, version):
     Returns:
         Path to preprocessed directory: out/.preprocessed/{module}/{module}_interface/{version}/
     """
-    # Use a dedicated .preprocessed directory in out/ for clarity
-    # Extract workspace root from interface_root_stable path
-    # interface_root_stable is typically: <workspace>/stable/aidl/{module}
-    stable_path = interface.interface_root_stable
-    workspace_root = path.dirname(path.dirname(path.dirname(stable_path)))  # Go up 3 levels
-    
+    # Use a dedicated .preprocessed directory in out/ for clarity.
+    # Preprocessed AIDL is a shared build artefact - anchor it at the
+    # workspace root regardless of the interface's layout.
+    workspace_root = interface.workspace_root
+
     preprocessed_root = path.join(workspace_root, "out", ".preprocessed", interface.base_name)
     return path.join(preprocessed_root,
             interface.base_name + AIDL_PREPROCESSED_SUFFIX, version)
@@ -887,6 +898,12 @@ class AidlInterface:
     # Subdirectory name under stable/ for AIDL files (default: "aidl")
     # Can be overridden in interface.yaml via stable_aidl_subdir field
     stable_aidl_subdir = "aidl"
+    # Artefact layout: "central" (shared stable/ tree) or "module-local"
+    # (versioned AIDL + generated C++ co-located with the interface).
+    # Overridable via the interface.yaml `layout` field.
+    layout = "central"
+    # First interfaces root - used to locate shared build artefacts.
+    workspace_root = ""
     # Locations of directories required for intermediatory operations
     interface_root_out = ""
     interface_api_dir_out = ""
@@ -944,15 +961,31 @@ class AidlInterface:
         # Read stable_aidl_subdir from interface.yaml (optional field, default: "aidl")
         self.stable_aidl_subdir = data.get("aidl_interface").get("stable_aidl_subdir", "aidl")
 
+        # Workspace root - the first interfaces root. Used to locate shared
+        # build artefacts (e.g. preprocessed AIDL) independently of layout.
+        self.workspace_root = path.realpath(interfaces_roots[0])
+
+        # layout: where versioned AIDL sources and generated C++ are located.
+        #   central      - shared stable/ tree at the workspace root (legacy default)
+        #   module-local - co-located with the interface, in its own directory
+        # The older `frozen_location` field is still honoured for back-compat.
         self.frozen_location = data.get("aidl_interface").get("frozen_location", "stable")
-        if self.frozen_location == "stable":
+        layout = data.get("aidl_interface").get("layout")
+        if layout is None:
+            layout = "module-local" if self.frozen_location == "interface" else "central"
+        self.layout = layout
+
+        if self.layout == "module-local":
+            # Versioned AIDL and generated C++ live in the interface's own
+            # directory tree: <module>/<version>/. interface_root is the
+            # <module>/<version> directory, so its parent is the module dir.
+            module_dir = path.dirname(self.interface_root)
+            self.interface_root_stable = module_dir
+            self.interface_gen_dir = module_dir
+        else:
             # First directory in the list of interface root directory should
             # have the stable directory
             self.interface_root_stable = path.join(interfaces_roots[0], f"stable/{self.stable_aidl_subdir}", self.base_name)
-            self.interface_gen_dir = path.join(interfaces_roots[0], "stable/generated", self.base_name)
-        elif self.frozen_location == "interface":
-            self.interface_root_stable = path.join(self.interface_root, "aidl_api")
-            # TODO Needs to be updated
             self.interface_gen_dir = path.join(interfaces_roots[0], "stable/generated", self.base_name)
 
         self.srcs = data.get("aidl_interface").get("srcs")
