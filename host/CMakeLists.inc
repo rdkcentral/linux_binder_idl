@@ -169,7 +169,9 @@ function(AddInterfaceLibrary aidl_target)
         set(interface_version "current")
         set(interface_version_arg "")
     else()
-        set(interface_version_arg "-v ${interface_version}")
+        # CMake list so execute_process expands this to two separate argv entries.
+        # aidl_ops.py uses getopt and rejects "-v <version>" as a single token.
+        set(interface_version_arg -v ${interface_version})
     endif()
 
     if (NOT "${${aidl_target}_deps}" STREQUAL "")
@@ -202,7 +204,12 @@ function(AddInterfaceLibrary aidl_target)
     #     compile and eliminates the "ship stale generated code" class of
     #     bug entirely.
     #   - Frozen versions (e.g. v1, v2): pre-committed C++ is part of the
-    #     release contract - never regenerate; reuse what's on disk.
+    #     release contract - if pre-committed sources exist on disk, reuse
+    #     them as-is and skip regen entirely. The first build of a freshly
+    #     checked-out frozen version that ships no generated tree (rare,
+    #     but possible for in-flight versions before sources are committed)
+    #     will generate once to bootstrap; subsequent builds reuse what's
+    #     on disk.
     file(GLOB_RECURSE existing_sources "${source_dir}/*.cpp")
 
     if (interface_version STREQUAL "current")
@@ -216,7 +223,7 @@ function(AddInterfaceLibrary aidl_target)
         )
 
         if(NOT gen_result EQUAL 0)
-            message(FATAL_ERROR "Failed to generate sources for ${interface_name}. Run './build_interfaces.sh ${interface_name}' first.")
+            message(FATAL_ERROR "AIDL generation failed for ${interface_name}; check the aidl_ops.py output above.")
         endif()
 
         # Re-glob after generation; the generator writes <module>/current/{src,include}.
@@ -251,7 +258,7 @@ function(AddInterfaceLibrary aidl_target)
         )
 
         if(NOT gen_result EQUAL 0)
-            message(FATAL_ERROR "Failed to generate sources for ${interface_name}. Run './build_interfaces.sh ${interface_name}' first.")
+            message(FATAL_ERROR "AIDL generation failed for ${interface_name}; check the aidl_ops.py output above.")
         endif()
 
         # Re-check after generation
