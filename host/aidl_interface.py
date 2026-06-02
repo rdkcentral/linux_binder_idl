@@ -47,6 +47,42 @@ AIDL_API_DIR = "aidl_api"
 LANG_CPP = "cpp"
 CURRENT_VERSION = "current"
 
+# Sentinel used by `get_imports()` to mean "no pin — caller picks the version
+# from latest_version()/next_version()". Preserved for backward compatibility
+# with bare-name imports during the deprecation window for `name@version`.
+IMPORT_VERSION_UNPINNED = "unknown"
+
+
+def parse_import_spec(spec):
+    """Parse a single `imports` entry from interface.yaml.
+
+    Accepts either bare-name form ("audiodecoder") or the versioned
+    `name@version` form ("audiodecoder@0.1.0.0", "common@current"). The
+    version part is opaque to the parser — any non-empty string is allowed
+    and resolved against the on-disk version directory layout downstream.
+
+    Returns:
+        (name, version_or_None) — version is `None` for bare-name imports,
+        the literal version string otherwise. `@current` is preserved as
+        the string "current".
+    """
+    if not isinstance(spec, str):
+        raise ValueError(
+                "imports entry must be a string, got %r" % (spec,))
+    if "@" not in spec:
+        return (spec, None)
+    name, _, version = spec.partition("@")
+    if not name or not version:
+        raise ValueError(
+                "imports entry %r must be 'name@version' with both parts "
+                "non-empty" % (spec,))
+    return (name, version)
+
+
+# Track which (consumer, imported-name) pairs we've already warned about
+# so the deprecation message fires once per build, not once per call.
+_bare_import_warned = set()
+
 TARGET_UPDATE_API = "update-api"
 TARGET_FREEZE_API = "freeze-api"
 
@@ -92,7 +128,22 @@ def topological_sort(dependencies):
         raise ValueError("Cycle detected in dependencies")
 
 
-def generate_libraries_dependencies(interfaces, out_dir):
+def _resolve_lib_deps_for_current(interface):
+    """Helper: translate an interface's `current` imports into linker
+    target names (`<name>-v<version>-cpp`). Honours version pins; falls
+    back to `-vcurrent-cpp` for unpinned entries.
+    """
+    imports = interface.get_imports(interface.next_version())
+    lib_deps = []
+    for imprt, pin in imports.items():
+        if pin == IMPORT_VERSION_UNPINNED:
+            lib_deps.append("%s-vcurrent-cpp" % imprt)
+        else:
+            lib_deps.append("%s-v%s-cpp" % (imprt, pin))
+    return lib_deps
+
+
+def generate_libraries_dependencies(interfaces, out_dir, all_loaded=None):
     """ Generates list of versioned interface libraries and thier dependencies
     as per versions mentioned from all available interfaces.
     The list will be in a topological order so that the dependent libraries are
@@ -102,15 +153,24 @@ def generate_libraries_dependencies(interfaces, out_dir):
     in the build
 
     Args:
-        interfaces: List of all AIDL interfaces
-        out_dir: Location of the directory where the list must be placed
-
+        interfaces: dict of base_name → AidlInterface (the canonical
+            "current" entry that overrides any same-name snapshot).
+        out_dir: Location of the directory where the list must be placed.
+        all_loaded: optional list of every AidlInterface seen by
+            `load_interfaces`, including frozen snapshots. When provided,
+            each snapshot directory `<module>/<version>/interface.yaml`
+            is auto-registered as a buildable `<name>-v<version>-cpp`
+            target with its own pinned imports resolved. This lets
+            consumers reference frozen producer versions
+            (`name@<X.Y.Z.W>`) without each producer having to enumerate
+            every snapshot under `versions_with_info` in its current
+            interface.yaml.
     """
 
     dep_file = path.join(out_dir, LIBRARIES_DEPENDENCIES_FILE)
     if path.exists(dep_file):
         os.remove(dep_file)
-    
+
     # Ensure output directory exists
     os.makedirs(out_dir, exist_ok=True)
 
@@ -123,10 +183,71 @@ def generate_libraries_dependencies(interfaces, out_dir):
                     for lib in interface.versions_with_info[ver]]
             lib_deps_dict["%s-v%s-cpp" %(interface_name, ver)] = lib_deps
         # For Current version
-        imports = interface.get_imports(interface.next_version())
-        lib_deps = [imprt + "-vcurrent-cpp"
-                for imprt in list(imports.keys())]
-        lib_deps_dict["%s-vcurrent-cpp" %(interface_name)] = lib_deps
+        # `get_imports()` returns `{name: version_pin_or_UNPINNED}`. When
+        # a pin is present (e.g. "0.1.0.0") the consumer links against the
+        # corresponding versioned library (e.g. `audiodecoder-v0.1.0.0-cpp`).
+        # An UNPINNED entry falls back to the current sibling so bare-name
+        # imports keep working through the deprecation window.
+        lib_deps_dict["%s-vcurrent-cpp" %(interface_name)] = \
+                _resolve_lib_deps_for_current(interface)
+
+    # On-disk snapshot auto-discovery (linux_binder_idl#23).
+    # Walk every loaded AidlInterface; for snapshot directories
+    # (`<module>/<version>/interface.yaml`), register a
+    # `<name>-v<version>-cpp` target whose deps come from the snapshot's
+    # own pinned imports. First-write-wins — entries already added via
+    # `versions_with_info` above are preserved.
+    if all_loaded is not None:
+        for snap in all_loaded:
+            version_label = path.basename(snap.interface_root)
+            if version_label == CURRENT_VERSION:
+                continue
+            target_name = "%s-v%s-cpp" % (snap.base_name, version_label)
+            if target_name in lib_deps_dict:
+                continue
+            snap_deps = []
+            for imprt, pin in snap.import_versions.items():
+                if pin is None or pin == CURRENT_VERSION:
+                    # A snapshot importing without an explicit pin (or
+                    # @current) is a recipe for silent drift — the
+                    # snapshot would link against its dependency's
+                    # in-development version. We honour the existing
+                    # behaviour for back-compat but log a clear warning
+                    # so the snapshot can be migrated.
+                    logger.warning(
+                            "snapshot %s v%s imports '%s' without a "
+                            "concrete version pin. Frozen snapshots "
+                            "should pin to a concrete producer version "
+                            "(e.g. '%s@%s') to avoid silent drift when "
+                            "the producer's current sibling changes."
+                            % (snap.base_name, version_label, imprt,
+                                imprt, version_label))
+                    snap_deps.append("%s-vcurrent-cpp" % imprt)
+                else:
+                    snap_deps.append("%s-v%s-cpp" % (imprt, pin))
+            lib_deps_dict[target_name] = snap_deps
+
+    # Validate every referenced dependency target is registered. If a consumer
+    # pins to a producer version that has not been registered (e.g.
+    # `videodecoder@current` imports `common@0.1.0.0` but `common`'s
+    # interface.yaml does not declare 0.1.0.0 in `versions_with_info`), the
+    # topological sort below would fail with a confusing KeyError. Surface a
+    # clear, actionable message instead.
+    for consumer, deps in lib_deps_dict.items():
+        for dep in deps:
+            if dep not in lib_deps_dict:
+                logger.error(
+                        "Dependency target '%s' required by '%s' is not "
+                        "registered. The producer module's interface.yaml "
+                        "must list this version under `versions_with_info` "
+                        "for the toolchain to build it. Either correct the "
+                        "pin in the consumer's interface.yaml, register the "
+                        "version on the producer side, or remove the pin to "
+                        "fall back to the current sibling."
+                        % (dep, consumer))
+                raise RuntimeError(
+                        "Unresolved versioned-import target '%s' (consumer: %s)"
+                        % (dep, consumer))
 
 
     libs_sorted = topological_sort(lib_deps_dict)
@@ -189,16 +310,23 @@ def load_interfaces(interfaces_roots, out_dir, gen_dir=None, gen_lib_deps=False)
         return (1 if parent == "current" else 0, parent, loc)
     interface_locations.sort(key=_interface_sort_key)
     aidl_interfaces = {}
+    all_loaded = []
     for interface_loc in interface_locations:
         aidl_interface = AidlInterface(interfaces_roots, path.dirname(interface_loc),
                 out_dir, gen_dir)
         if aidl_interface is not None:
             aidl_interfaces[aidl_interface.base_name] = aidl_interface
+            # Retain a reference to every AidlInterface loaded — including
+            # frozen-snapshot entries that the `aidl_interfaces[base_name]`
+            # assignment above would otherwise overwrite. Required for
+            # on-disk snapshot target auto-discovery in
+            # `generate_libraries_dependencies`.
+            all_loaded.append(aidl_interface)
 
     # TODO: Do this only if interfaces are updated.
     # Need to find a way to check if interfaces are updated
     if gen_lib_deps:
-        generate_libraries_dependencies(aidl_interfaces, out_dir)
+        generate_libraries_dependencies(aidl_interfaces, out_dir, all_loaded=all_loaded)
 
     return aidl_interfaces
 
@@ -477,7 +605,7 @@ def process_imports(interface, interfaces, api_deps):
             imp_interface = interfaces[imp]
             # Set version as per thier frozen versions
             # in case of unknown(case of direct dependencies), set it to the latest
-            if imports[imp] == "unknown":
+            if imports[imp] == IMPORT_VERSION_UNPINNED:
                 # Check if the latest version is "0" (never frozen)
                 # If so, use the next version (current)
                 ver = imp_interface.latest_version()
@@ -989,9 +1117,39 @@ class AidlInterface:
             self.interface_gen_dir = path.join(interfaces_roots[0], "stable/generated", self.base_name)
 
         self.srcs = data.get("aidl_interface").get("srcs")
-        self.imports = data.get("aidl_interface").get("imports")
-        if self.imports is None:
-            self.imports = []
+
+        # imports may be:
+        #   - bare name           : "audiodecoder"               (deprecated)
+        #   - versioned name      : "audiodecoder@0.1.0.0"
+        #   - explicit current    : "audiodecoder@current"
+        #
+        # `self.imports` stays as a flat list of bare names for back-compat
+        # with code that iterates it (aidl_api.py). The pinned version, if
+        # any, is captured per-name in `self.import_versions`.
+        raw_imports = data.get("aidl_interface").get("imports") or []
+        self.imports = []
+        self.import_versions = {}
+        # Deprecation warnings only fire for the in-development interface
+        # (located in `<module>/current/`). Frozen-snapshot interface.yaml
+        # files are historical artefacts — re-warning on every build would
+        # be noise and is not actionable since the snapshot is immutable.
+        is_current = path.basename(self.interface_root) == CURRENT_VERSION
+        for raw in raw_imports:
+            name, version = parse_import_spec(raw)
+            self.imports.append(name)
+            self.import_versions[name] = version
+            if version is None and is_current:
+                key = (self.base_name, name)
+                if key not in _bare_import_warned:
+                    _bare_import_warned.add(key)
+                    logger.warning(
+                            "interface.yaml: '%s' imports '%s' without a "
+                            "version pin. Bare-name imports are deprecated "
+                            "and will be removed in a future major release. "
+                            "Use '%s@current' for the in-development version "
+                            "or '%s@<X.Y.Z.W>' to pin to a released snapshot."
+                            % (self.base_name, name, name, name))
+
         self.stability = data.get("aidl_interface").get("stability")
         versions = []
         versions_with_info = {}
@@ -1049,9 +1207,18 @@ class AidlInterface:
                 assert False, "Unknown version provided"
 
             for imp in self.imports:
-                # let the called decide whether to use the next version or current version
-                # for imports.
-                imports[imp] = "unknown"
+                # Resolve the per-import version pin (if any) declared in
+                # interface.yaml. A bare-name import leaves `pin` as None,
+                # which falls back to IMPORT_VERSION_UNPINNED — the existing
+                # contract that lets the caller pick latest/next/current.
+                # An explicit `@current` is treated the same as the unpinned
+                # form so the toolchain always builds against the consumer's
+                # current sibling.
+                pin = self.import_versions.get(imp)
+                if pin is None or pin == CURRENT_VERSION:
+                    imports[imp] = IMPORT_VERSION_UNPINNED
+                else:
+                    imports[imp] = pin
 
             return imports
 
