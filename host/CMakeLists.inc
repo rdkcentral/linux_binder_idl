@@ -162,10 +162,14 @@ function(AddInterfaceLibrary aidl_target)
     endif()
 
     string(REGEX MATCH "^[^-]+" interface_name "${aidl_target}")
-    string(REGEX MATCH "-v([0-9]+)" version_part "${aidl_target}")
-    string(REGEX REPLACE "-v" "" interface_version "${version_part}")
+    # Match "-v<version>-cpp" where <version> is any non-dash token. This
+    # accepts both integer ordinals ("-v1-cpp") and dotted release strings
+    # ("-v0.1.0.0-cpp") used by repos that pin imports via "name@X.Y.Z.W"
+    # in interface.yaml (linux_binder_idl#23).
+    string(REGEX MATCH "-v([^-]+)-cpp$" _aidl_version_match "${aidl_target}")
+    set(interface_version "${CMAKE_MATCH_1}")
 
-    if (NOT interface_version)
+    if (interface_version STREQUAL "" OR interface_version STREQUAL "current")
         set(interface_version "current")
         set(interface_version_arg "")
     else()

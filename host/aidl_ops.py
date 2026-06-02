@@ -200,9 +200,12 @@ def main(argv):
             _gen_dir = a
 
         elif o == "-v" or o == "--version":
-            # Convert the given value to int and then to string.
-            # This is required in case the version is given along with the space.
-            _gen_version = str(int(a))
+            # Version is passed through verbatim. Integer ordinals ("1", "2")
+            # and dotted release strings ("0.1.0.0") are both valid — the
+            # latter is used by repos that pin imports via "name@X.Y.Z.W"
+            # in interface.yaml (linux_binder_idl#23). The value is treated
+            # as an opaque directory-name component downstream.
+            _gen_version = a.strip()
 
         elif o == "-o" or o == "--out_dir":
             _out_dir = a
