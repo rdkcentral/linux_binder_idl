@@ -109,6 +109,27 @@ mkdir -p "${OUT_DIR}/bin"
 
 echo "==> Configuring CMake for host AIDL tools..."
 
+# Ensure the system m4 is used, not a Yocto toolchain m4.
+# Some Yocto SDKs ship m4 < 1.4.12 on PATH (and export M4=... pointing
+# at it) which lacks the --gnu flag required by bison 3.x. Export M4
+# explicitly to the system binary when we can find one.
+# Regression coverage: tests/test_yocto_m4_regression.sh (gh #30).
+SYSTEM_M4="$(command -v m4 2>/dev/null || true)"
+if [ -x "/usr/bin/m4" ]; then
+  SYSTEM_M4="/usr/bin/m4"
+fi
+if [ -z "${SYSTEM_M4}" ]; then
+  echo "WARNING: could not find m4; bison may fail. Install with: sudo apt install m4"
+else
+  export M4="${SYSTEM_M4}"
+  echo "Using m4:        ${M4}"
+fi
+
+# NOTE on bison: CMakeLists.txt hard-sets BISON_EXECUTABLE to the
+# vendored android/build-tools bison via a plain set() (no CACHE),
+# which would override any -DBISON_EXECUTABLE passed here. The M4
+# export above is sufficient: the vendored bison reads M4 at runtime.
+
 # Force native host build: override any cross-compilation settings.
 # In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)
 # and CFLAGS/CXXFLAGS (with --sysroot for ARM) are set for the TARGET.
