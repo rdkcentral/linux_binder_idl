@@ -109,12 +109,34 @@ mkdir -p "${OUT_DIR}/bin"
 
 echo "==> Configuring CMake for host AIDL tools..."
 
+# Ensure the system m4 is used, not a Yocto toolchain m4.
+# Some Yocto SDKs ship m4 < 1.4.12 on PATH which lacks the --gnu flag
+# required by bison 3.x. Export M4 explicitly to the system binary.
+SYSTEM_M4="$(command -v m4 2>/dev/null)"
+if [ -x "/usr/bin/m4" ]; then
+  SYSTEM_M4="/usr/bin/m4"
+fi
+if [ -z "${SYSTEM_M4}" ]; then
+  echo "WARNING: could not find m4; bison may fail. Install with: sudo apt install m4"
+fi
+export M4="${SYSTEM_M4}"
+echo "Using m4:        ${M4}"
+
+# Find the system bison (avoid caching the Yocto SDK bison which depends on
+# the Yocto m4 via PATH lookup rather than an absolute path).
+SYSTEM_BISON="$(PATH=/usr/bin:/usr/local/bin command -v bison 2>/dev/null || true)"
+if [ -z "${SYSTEM_BISON}" ]; then
+  SYSTEM_BISON=""
+fi
+echo "Using bison:     ${SYSTEM_BISON:-cmake auto-detect}"
+
 # Force native host build: override any cross-compilation settings.
 # In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)
 # and CFLAGS/CXXFLAGS (with --sysroot for ARM) are set for the TARGET.
 # Host tools MUST build natively, so we override these via cmake -D flags
 # without modifying the environment variables themselves.
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
+  ${SYSTEM_BISON:+-DBISON_EXECUTABLE="${SYSTEM_BISON}"} \
   -DCMAKE_TOOLCHAIN_FILE="" \
   -DCMAKE_C_COMPILER="${HOST_CC}" \
   -DCMAKE_CXX_COMPILER="${HOST_CXX}" \
