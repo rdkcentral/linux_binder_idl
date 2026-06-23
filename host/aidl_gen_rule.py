@@ -271,9 +271,21 @@ def gen_cpp_sources(interface_name,
         with open(api_dump.hash_file, 'r') as file:
             hash_gen = file.read().replace('\n', '')
 
+    # Emitted interface VERSION / getInterfaceVersion(). A module-local snapshot
+    # may declare an explicit monotonic ordinal (interface.yaml `version:`) so a
+    # frozen release reports a real version instead of always 1. This is
+    # DECOUPLED from gen_version, which keys import/dependency resolution
+    # (get_imports) and must stay at the resolution version. Invariant: an
+    # explicit `version:` is only set on a frozen snapshot (real `.hash`); for
+    # current/ it is unset, so emit_version == gen_version and HASH == notfrozen,
+    # preserving existing behaviour. (#32)
+    emit_version = gen_version
+    if interface.layout == "module-local" and getattr(interface, "module_version", None):
+        emit_version = str(interface.module_version)
+
     # include version and hash
     aidl_gen_cmd = aidl_gen_cmd + \
-            "--version=%s --hash=%s " %(gen_version, hash_gen)
+            "--version=%s --hash=%s " %(emit_version, hash_gen)
 
     aidl_gen_cmd = aidl_gen_cmd + \
             "--out=%s %s " %(gen_dir, " ".join(api_dump.files))
