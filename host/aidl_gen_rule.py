@@ -280,8 +280,24 @@ def gen_cpp_sources(interface_name,
     # current/ it is unset, so emit_version == gen_version and HASH == notfrozen,
     # preserving existing behaviour. (#32)
     emit_version = gen_version
-    if interface.layout == "module-local" and getattr(interface, "module_version", None):
-        emit_version = str(interface.module_version)
+    mv = getattr(interface, "module_version", None)
+    if interface.layout == "module-local" and mv is not None:
+        mv_str = str(mv).strip()
+        # Validate: positive integer only (also makes the shell=True
+        # interpolation below injection-safe).
+        if not mv_str.isdigit() or int(mv_str) < 1:
+            raise RuntimeError(
+                "interface.yaml 'version' for %s must be a positive integer (got %r)"
+                % (interface.base_name, mv))
+        # Enforce the invariant: a pinned interface version is only meaningful on
+        # a frozen contract. Setting it without a real .hash is a configuration
+        # error, not a silent fallback.
+        if hash_gen == "notfrozen":
+            raise RuntimeError(
+                "interface.yaml 'version: %s' set on %s but the contract is "
+                "'notfrozen' — a pinned version requires a frozen .hash"
+                % (mv_str, interface.base_name))
+        emit_version = mv_str
 
     # include version and hash
     aidl_gen_cmd = aidl_gen_cmd + \
