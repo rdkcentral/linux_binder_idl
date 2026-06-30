@@ -71,9 +71,16 @@ else
 fi
 [ -s "${WORK}/libs/binder/binder_module.h" ] || skip "binder_module.h unavailable"
 
-# Apply only the binder_module.h hunk(s) of native.patch.
-( cd "${WORK}" && git init -q && git apply --include='libs/binder/binder_module.h' "${PATCH}" 2>/dev/null ) \
-    || true   # if the patch no longer touches the file (fixed), that's fine
+# Apply only the binder_module.h hunk(s) of native.patch, IF native.patch
+# touches that file. When it does, the apply MUST succeed — otherwise we'd be
+# compiling the unpatched header and could report a false PASS. When it does
+# not (the #35 fix leaves binder_module.h upstream), there is nothing to apply
+# and the upstream fallbacks are already in place.
+command -v git >/dev/null 2>&1 || skip "git not available"
+if grep -q 'b/libs/binder/binder_module.h' "${PATCH}"; then
+    ( cd "${WORK}" && git init -q && git apply --include='libs/binder/binder_module.h' "${PATCH}" ) \
+        || fail "native.patch modifies binder_module.h but its hunk failed to apply"
+fi
 
 # A 4.9-era <linux/android/binder.h>: the base ioctl surface, but NO freeze
 # support (binder_frozen_status_info / BINDER_FREEZE / BINDER_GET_FROZEN_INFO).
@@ -106,7 +113,7 @@ int probe(void) {
 EOF
 
 echo "  compiling against a 4.9-style UAPI header (no freeze support) ..."
-if "${CXX}" -c -I"${WORK}/uapi49" -I"${WORK}" "${WORK}/probe.c" -o "${WORK}/probe.o" 2>"${WORK}/cc.err"; then
+if "${CXX}" -x c++ -c -I"${WORK}/uapi49" -I"${WORK}" "${WORK}/probe.c" -o "${WORK}/probe.o" 2>"${WORK}/cc.err"; then
     pass "#35: binder_module.h freeze fallbacks compile against 4.9 headers"
 else
     echo "    ---- compiler error (fallbacks missing → #35 regression) ----"
