@@ -172,6 +172,36 @@ def check_for_sources(dir_path):
 
     return has_content
 
+def resolve_emit_version(layout, module_version, gen_version, hash_gen, base_name):
+    """Resolve the interface VERSION emitted to aidl (the --version value).
+
+    A module-local snapshot may pin an explicit monotonic ordinal via
+    interface.yaml `version:` so a frozen release reports a real
+    getInterfaceVersion() instead of always 1. It is emitted only on a frozen
+    contract (a real `.hash`). When unset — or for non-module-local layouts —
+    the emitted version is gen_version (the resolution version), preserving
+    existing current/ behaviour. This is DECOUPLED from gen_version, which keys
+    import/dependency resolution. (#32)
+
+    Raises RuntimeError if `version:` is not a positive integer, or is set while
+    the contract is still 'notfrozen' (a pinned version needs a frozen .hash).
+    """
+    if layout != "module-local" or module_version is None:
+        return gen_version
+    mv_str = str(module_version).strip()
+    # Positive integer only (also keeps the shell=True interpolation downstream
+    # injection-safe).
+    if not mv_str.isdigit() or int(mv_str) < 1:
+        raise RuntimeError(
+            "interface.yaml 'version' for %s must be a positive integer (got %r)"
+            % (base_name, module_version))
+    if hash_gen == "notfrozen":
+        raise RuntimeError(
+            "interface.yaml 'version: %s' set on %s but the contract is "
+            "'notfrozen' — a pinned version requires a frozen .hash"
+            % (mv_str, base_name))
+    return mv_str
+
 def gen_cpp_sources(interface_name,
         interfaces,
         out_dir,
@@ -279,25 +309,9 @@ def gen_cpp_sources(interface_name,
     # explicit `version:` is only set on a frozen snapshot (real `.hash`); for
     # current/ it is unset, so emit_version == gen_version and HASH == notfrozen,
     # preserving existing behaviour. (#32)
-    emit_version = gen_version
-    mv = getattr(interface, "module_version", None)
-    if interface.layout == "module-local" and mv is not None:
-        mv_str = str(mv).strip()
-        # Validate: positive integer only (also makes the shell=True
-        # interpolation below injection-safe).
-        if not mv_str.isdigit() or int(mv_str) < 1:
-            raise RuntimeError(
-                "interface.yaml 'version' for %s must be a positive integer (got %r)"
-                % (interface.base_name, mv))
-        # Enforce the invariant: a pinned interface version is only meaningful on
-        # a frozen contract. Setting it without a real .hash is a configuration
-        # error, not a silent fallback.
-        if hash_gen == "notfrozen":
-            raise RuntimeError(
-                "interface.yaml 'version: %s' set on %s but the contract is "
-                "'notfrozen' — a pinned version requires a frozen .hash"
-                % (mv_str, interface.base_name))
-        emit_version = mv_str
+    emit_version = resolve_emit_version(
+        interface.layout, getattr(interface, "module_version", None),
+        gen_version, hash_gen, interface.base_name)
 
     # include version and hash
     aidl_gen_cmd = aidl_gen_cmd + \
