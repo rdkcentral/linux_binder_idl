@@ -62,12 +62,13 @@ done
 mkdir -p "${WORK}/libs/binder"
 if [ -n "${SRC}" ]; then
     cp "${SRC}/libs/binder/binder_module.h" "${WORK}/libs/binder/binder_module.h"
-elif command -v curl >/dev/null 2>&1 && [ -n "${TAG}" ]; then
+elif command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && [ -n "${TAG}" ]; then
+    # googlesource ?format=TEXT returns base64, so base64 is required to decode.
     url="https://android.googlesource.com/platform/frameworks/native/+/refs/tags/${TAG}/libs/binder/binder_module.h?format=TEXT"
     curl -fsSL "${url}" 2>/dev/null | base64 -d > "${WORK}/libs/binder/binder_module.h" 2>/dev/null \
         || skip "could not fetch binder_module.h@${TAG}"
 else
-    skip "no AOSP source and no curl to fetch binder_module.h"
+    skip "no AOSP source and no curl+base64 to fetch binder_module.h"
 fi
 [ -s "${WORK}/libs/binder/binder_module.h" ] || skip "binder_module.h unavailable"
 
