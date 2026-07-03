@@ -1151,6 +1151,11 @@ class AidlInterface:
                             % (self.base_name, name, name, name))
 
         self.stability = data.get("aidl_interface").get("stability")
+        # Optional explicit interface-version for module-local layout. When set
+        # (e.g. by release.sh when freezing a snapshot) it drives the emitted
+        # AIDL VERSION / getInterfaceVersion(); when absent, the emitted version
+        # falls back to the usual next_version(), preserving existing behaviour. (#32)
+        self.module_version = data.get("aidl_interface").get("version")
         versions = []
         versions_with_info = {}
         ver_info = data.get("aidl_interface").get("versions_with_info")
