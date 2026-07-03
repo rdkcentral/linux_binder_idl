@@ -100,7 +100,7 @@ execute_process(COMMAND pwd OUTPUT_VARIABLE WORKING_DIR OUTPUT_STRIP_TRAILING_WH
 message(STATUS "WORKING_DIR: ${WORKING_DIR} ")
 if (DEFINED INTERFACES_ROOT_DIRS)
     foreach(interface_dir IN LISTS INTERFACES_ROOT_DIRS)
-        file(REAL_PATH ${interface_dir} interface_dir_abs BASE_DIRECTORY ${WORKING_DIR})
+        get_filename_component(interface_dir_abs "${interface_dir}" REALPATH BASE_DIR "${WORKING_DIR}")
         list(APPEND interfaces_dir ${interface_dir_abs})
     endforeach()
 else()
