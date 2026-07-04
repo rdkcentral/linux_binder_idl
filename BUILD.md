@@ -377,14 +377,85 @@ ${CXX} --version
 The CMake build should be self-contained. If you see missing library errors,
 ensure you're building the target SDK (default behaviour).
 
-## Architecture Notes
+## Architecture: layering, bitness & per-layer binder build
 
-- **Host tools are architecture-independent** - They generate code, not run on target
-- **Target libraries must match userspace architecture** - Build 32-bit libraries for 32-bit userspace, 64-bit for 64-bit userspace
-- **32-bit userspace on 64-bit kernel** - Common in embedded systems; use `TARGET_LIB32_VERSION=ON` and ensure kernel has `CONFIG_ANDROID_BINDER_IPC_32BIT=y`
-- **No mixing within userspace** - All binder libraries and applications in userspace must be the same bitness (all 32-bit or all 64-bit)
-- **Host and target use separate build directories** - Never mix host tool builds with target library builds
-- **Kernel headers included** - Self-contained build, no system dependencies
+Each deployment **layer builds and ships its own binder runtime**. The MW and
+vendor layers run as separate processes and interoperate over the kernel Binder
+driver — neither links the other's libraries.
+
+- **MW** builds its own `libbinder`/`libutils` (+ the HAL interface libraries),
+  staged under its layer prefix. MW is **32-bit** on current platforms.
+- **Vendor** builds its own `libbinder`/`libutils` (+ the HAL implementation) at
+  the vendor's bitness — platform-dependent (32- or 64-bit).
+- **`servicemanager`** runs once for the system context both layers share.
+
+```mermaid
+graph LR
+    subgraph "MW process (32-bit)"
+        A[MW client] --> B[libbinder]
+    end
+    subgraph "Vendor process (32- or 64-bit)"
+        D[libbinder] --> E[Vendor HAL impl]
+    end
+    B -->|ioctl /dev/binder| K[Kernel Binder driver]
+    K -->|ioctl /dev/binder| D
+```
+
+### Bitness is per-process; the protocol version governs interop
+
+A process is a single ELF class — every library loaded into it must match that
+bitness, so **within** a layer's process everything is the same bitness. Across
+MW ↔ vendor there is no such constraint: they are separate processes, and the
+kernel Binder driver bridges them.
+
+What must match across MW, vendor, and kernel is **not** compile bitness but the
+**binder protocol version**. libbinder verifies it with a strict *equality*
+check when it opens `/dev/binder` — the open fails if the kernel's protocol
+version is not exactly the library's. The version is selected at build time by
+`BINDER_IPC_32BIT`:
+
+| Build | `BINDER_IPC_32BIT` | `binder_uintptr_t` | Protocol |
+| --- | --- | --- | --- |
+| legacy 32-bit | set | 32-bit | **7** |
+| modern (any process bitness) | unset | 64-bit | **8** |
+
+A 32-bit process can run protocol **8** (64-bit binder handles inside a 32-bit
+process) — that is how a 32-bit and a 64-bit process interoperate on one kernel.
+
+### Supported platform configurations
+
+| Platform | MW | Vendor | Protocol | Build | Kernel |
+| --- | --- | --- | --- | --- | --- |
+| All-32-bit userspace | 32-bit | 32-bit | 7 | `TARGET_LIB32_VERSION=ON` (sets `BINDER_IPC_32BIT=1`) | `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
+| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | 32-bit compile, protocol 8 | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset |
+
+This toolchain currently produces the **all-32-bit (protocol 7)** build; the
+**mixed (protocol 8)** configuration requires decoupling the 32-bit compile from
+`BINDER_IPC_32BIT` — tracked in
+[#42](https://github.com/rdkcentral/linux_binder_idl/issues/42).
+
+### Supported kernel range
+
+**The floor is kernel 4.9**, through 5.16 and later. The AOSP
+`android-13.0.0_r74` libbinder runtime works across this range: newer ioctls
+(process-freeze ~5.10, oneway-spam-detection ~5.11, `BINDER_SET_CONTEXT_MGR_EXT`
+~4.19) are runtime-guarded and degrade non-fatally on older kernels, and the
+binderfs probe returns false when absent. The pre-5.16 freeze fallbacks in
+`binder_module.h` are in place (restored in #36), so the runtime builds against
+both 4.9 and current kernel headers. The governing constraint is
+protocol-version + struct-ABI match, not individual ioctl availability.
+
+Kernel config and device-node provisioning are in
+[Runtime Setup](#runtime-setup-and-installation). **Verification uses QEMU** —
+one VM per kernel; Docker shares the host kernel and cannot test other versions.
+See [`tests/qemu/`](tests/qemu/).
+
+### Build mechanics
+
+- **Host tools are architecture-independent** — they generate code, not run on target.
+- **Target libraries must match the userspace bitness** of the layer they ship in.
+- **Host and target use separate build directories** — never mix them.
+- **Kernel headers are vendored** — self-contained build, no system dependency.
 
 ## Runtime Setup and Installation
 
