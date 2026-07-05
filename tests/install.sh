@@ -53,21 +53,24 @@ elif command -v pacman  >/dev/null 2>&1; then PM=pacman
 else echo "ERROR: no supported package manager (apt/dnf/pacman) found." >&2; exit 1; fi
 
 case "${PM}" in
+    # Note: the *-multilib / .i686 packages provide the 32-bit (-m32) toolchain
+    # for building a 32-bit binder locally on an x86_64 host (real targets use an
+    # ARM cross-toolchain instead). Needed for the default TARGET_LIB32 build.
     apt)
         RUN_PKGS=(qemu-system-x86 busybox-static cpio g++ gzip)
-        BUILD_PKGS=(build-essential wget tar rsync bc flex bison unzip file git python3
-                    libncurses-dev libssl-dev libelf-dev)
+        BUILD_PKGS=(build-essential gcc-multilib g++-multilib wget tar rsync bc flex bison
+                    unzip file git python3 libncurses-dev libssl-dev libelf-dev)
         INSTALL=(apt-get install -y)
         REFRESH=(apt-get update) ;;
     dnf)
         RUN_PKGS=(qemu-system-x86 busybox cpio gcc-c++ gzip)
-        BUILD_PKGS=(make gcc gcc-c++ wget tar rsync bc flex bison unzip file git python3
-                    ncurses-devel openssl-devel elfutils-libelf-devel)
+        BUILD_PKGS=(make gcc gcc-c++ glibc-devel.i686 libstdc++-devel.i686 wget tar rsync bc
+                    flex bison unzip file git python3 ncurses-devel openssl-devel elfutils-libelf-devel)
         INSTALL=(dnf install -y)
         REFRESH=(true) ;;
     pacman)
         RUN_PKGS=(qemu-system-x86 busybox cpio gcc gzip)
-        BUILD_PKGS=(base-devel wget tar rsync bc flex bison unzip file git python ncurses openssl)
+        BUILD_PKGS=(base-devel lib32-gcc-libs wget tar rsync bc flex bison unzip file git python ncurses openssl)
         INSTALL=(pacman -S --needed --noconfirm)
         REFRESH=(true) ;;
 esac
