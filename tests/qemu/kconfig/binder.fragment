@@ -1,0 +1,17 @@
+# Binder kernel-config fragment (protocol 8 / mixed 32-64 default).
+# Merged onto a QEMU-bootable base defconfig by build-kernels.sh.
+#
+# Leave CONFIG_ANDROID_BINDER_IPC_32BIT unset here: a 64-bit kernel serving
+# 32-bit userspace over the compat path uses protocol 8. For the legacy
+# all-32-bit-userspace (protocol 7) matrix entry, use binder-ipc32.fragment.
+CONFIG_ANDROID=y
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
+# Serial console + initramfs boot (QEMU -kernel/-initrd):
+CONFIG_TTY=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
