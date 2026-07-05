@@ -212,12 +212,13 @@ CMAKE_ARGS=(
   -DTARGET_LIB32_VERSION="${TARGET_LIB32}"
 )
 
-# Binder wire protocol is decoupled from compile bitness (#42): forward
-# BINDER_IPC_32BIT when set so a 32-bit build can select protocol 8
-# (BINDER_IPC_32BIT=OFF). Unset -> CMake defaults it to follow the bitness.
-if [ -n "${BINDER_IPC_32BIT:-}" ]; then
-  CMAKE_ARGS+=(-DBINDER_IPC_32BIT="${BINDER_IPC_32BIT}")
-fi
+# Binder wire protocol, decoupled from compile bitness (#42). Always pass an
+# explicit BOOL so a value cached from an earlier run in the reused build-target
+# dir can't silently stick (e.g. a prior BINDER_IPC_32BIT=OFF run leaving the
+# cache at protocol 8). When the env var is unset, default it to follow the
+# compile bitness (32-bit -> protocol 7), matching CMakeLists.txt's default.
+BINDER_IPC_32BIT_ARG="${BINDER_IPC_32BIT:-${TARGET_LIB32}}"
+CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL="${BINDER_IPC_32BIT_ARG}")
 
 # When OE SDK cmake is used, the OEToolchainConfig.cmake handles compiler,
 # sysroot, and flags from the environment. We've already prepended the arch
