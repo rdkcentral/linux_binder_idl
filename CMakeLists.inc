@@ -90,6 +90,22 @@ if (TARGET_LIB64_VERSION)
     set(TARGET_LIB32_VERSION OFF)
 endif ()
 
+# Binder wire protocol is a DIFFERENT axis from compile bitness (linux_binder_idl#42):
+# protocol 7 (BINDER_IPC_32BIT=1) for legacy all-32-bit userspace; protocol 8 (unset)
+# for a mixed 32/64 platform (a 32-bit process can run protocol 8). Default follows
+# the compile bitness; override with -DBINDER_IPC_32BIT=OFF for a 32-bit protocol-8
+# build. MUST match the protocol the binder SDK was built with.
+if (NOT DEFINED BINDER_IPC_32BIT)
+    if (TARGET_LIB32_VERSION)
+        set(BINDER_IPC_32BIT ON)
+    else ()
+        set(BINDER_IPC_32BIT OFF)
+    endif ()
+endif ()
+if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
+    message(FATAL_ERROR "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit build; use -DBINDER_IPC_32BIT=OFF for 64-bit.")
+endif ()
+
 ###########################################################
 # Set all the path variables
 ###########################################################
@@ -609,17 +625,16 @@ target_include_directories(binder PUBLIC
 
 if (TARGET_LIB32_VERSION)
     message("Building 32bit binder library")
-    target_compile_options(binder PRIVATE
-        -Wall -Wextra -std=c++17 -D__linux__ -Wextra-semi -Wzero-as-null-pointer-constant
-        -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
-        -DBINDER_IPC_32BIT=1
-    )
 else ()
     message("Building 64bit binder library")
-    target_compile_options(binder PRIVATE
-        -Wall -Wextra -std=c++17 -D__linux__ -Wextra-semi -Wzero-as-null-pointer-constant
-        -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
-    )
+endif ()
+target_compile_options(binder PRIVATE
+    -Wall -Wextra -std=c++17 -D__linux__ -Wextra-semi -Wzero-as-null-pointer-constant
+    -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
+)
+# Wire protocol independent of compile bitness (see BINDER_IPC_32BIT above).
+if (BINDER_IPC_32BIT)
+    target_compile_options(binder PRIVATE -DBINDER_IPC_32BIT=1)
 endif ()
 
 target_link_libraries(binder PRIVATE log base cutils utils pthread)

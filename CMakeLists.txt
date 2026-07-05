@@ -206,6 +206,28 @@ if (TARGET_LIB64_VERSION)
     set(TARGET_LIB32_VERSION OFF)
 endif ()
 
+# Binder wire protocol vs compile bitness (linux_binder_idl#42).
+# The binder protocol version is a DIFFERENT axis from the ELF compile bitness:
+#   - protocol 7 (BINDER_IPC_32BIT=1, 32-bit binder handles) — legacy, for an
+#     all-32-bit userspace on a CONFIG_ANDROID_BINDER_IPC_32BIT kernel.
+#   - protocol 8 (unset, 64-bit handles) — required for a MIXED platform (32-bit
+#     MW + 64-bit vendor sharing one kernel); a 32-bit process CAN run protocol 8.
+# Default: follow the compile bitness (32-bit -> protocol 7) for backward
+# compatibility. Override with -DBINDER_IPC_32BIT=OFF to build a 32-bit
+# protocol-8 library (the mixed config), or =ON to force protocol 7.
+if (NOT DEFINED BINDER_IPC_32BIT)
+    if (TARGET_LIB32_VERSION)
+        set(BINDER_IPC_32BIT ON)
+    else ()
+        set(BINDER_IPC_32BIT OFF)
+    endif ()
+endif ()
+if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
+    message(FATAL_ERROR
+        "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit build; a 64-bit binder "
+        "library must use protocol 8 — set -DBINDER_IPC_32BIT=OFF for 64-bit.")
+endif ()
+
 ###########################################################
 # Set all the path variables
 ###########################################################
@@ -701,17 +723,19 @@ if (BUILD_ENV_YOCTO OR NOT BUILD_HOST_AIDL)
 
     if (TARGET_LIB32_VERSION)
         message("Building 32bit binder library")
-        target_compile_options(binder PRIVATE
-            -Wall -Wextra -D__linux__
-            -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
-            -DBINDER_IPC_32BIT=1
-        )
     else ()
         message("Building 64bit binder library")
-        target_compile_options(binder PRIVATE
-            -Wall -Wextra -D__linux__
-            -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
-        )
+    endif ()
+    target_compile_options(binder PRIVATE
+        -Wall -Wextra -D__linux__
+        -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
+    )
+    # Wire protocol is independent of compile bitness (see BINDER_IPC_32BIT above).
+    if (BINDER_IPC_32BIT)
+        message("  binder wire protocol: 7 (BINDER_IPC_32BIT=1)")
+        target_compile_options(binder PRIVATE -DBINDER_IPC_32BIT=1)
+    else ()
+        message("  binder wire protocol: 8")
     endif ()
 
     target_link_libraries(binder PRIVATE log base cutils utils pthread)
