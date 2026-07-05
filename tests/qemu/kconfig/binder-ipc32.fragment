@@ -1,0 +1,6 @@
+# Legacy 32-bit binder protocol (version 7) variant.
+# Apply IN ADDITION to binder.fragment for the all-32-bit-userspace matrix
+# entry, where MW and vendor are both 32-bit and the userspace libbinder is
+# built with -DBINDER_IPC_32BIT=1. A protocol-8 (64-bit) userspace will FAIL
+# libbinder's version check against a kernel built with this set.
+CONFIG_ANDROID_BINDER_IPC_32BIT=y
