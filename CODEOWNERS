@@ -1,0 +1,3 @@
+
+# Test harnesses: request review from the AIDL HAL / binder tester.
+/tests/ @rdkcentral/binder-aidl-maintainers @agampa263
