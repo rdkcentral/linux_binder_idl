@@ -32,6 +32,14 @@
         Generates dependency tree of interface libraries(stubs and proxies)
         of interfaces defined in given directories
 
+    aidl_ops dump-surface <aidl-root> [--out FILE]
+        Prints a canonical, deterministic text dump of the AIDL surface
+        declared under <aidl-root> (see host/aidl_surface.py)
+
+    aidl_ops diff-surface <old-dump> <new-dump> [--json]
+        Structurally compares two dump-surface outputs and classifies the
+        change as breaking / major / none (see host/aidl_surface.py)
+
     OPTIONS:
         -r DIRS(--interfaces_roots=DIRS)
             ";" separated list of root directories where interfaces are located
@@ -138,6 +146,11 @@ def handle_aidl_gen_deps():
 
 
 def main(argv):
+    # Surface subcommands (#27) are self-contained and bypass getopt.
+    if argv and argv[0] in ("dump-surface", "diff-surface"):
+        import aidl_surface
+        sys.exit(aidl_surface.main(argv))
+
     error = 0
     global _interface_name
     global _operation
