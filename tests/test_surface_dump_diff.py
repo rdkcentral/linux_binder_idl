@@ -72,7 +72,8 @@ enum Mode {
 def dump(*sources):
     with tempfile.TemporaryDirectory() as d:
         for i, src in enumerate(sources):
-            with open(os.path.join(d, "f%d.aidl" % i), "w") as f:
+            with open(os.path.join(d, "f%d.aidl" % i), "w",
+                      encoding="utf-8") as f:
                 f.write(src)
         return aidl_surface.dump_surface(d)
 
@@ -195,12 +196,26 @@ class TestDiffRuleTable(unittest.TestCase):
             "const @utf8InCpp String serviceName = \"thing\";",
             "const @utf8InCpp String serviceName = \"thing\";\n"
             "    const int LIMIT = 4;")
-        self.assertClass("major", [BASE_IFACE], [new], "enum_value_added")
+        self.assertClass("major", [BASE_IFACE], [new], "const_added")
+
+    def test_const_type_changed_is_single_change(self):
+        new = BASE_IFACE.replace("const @utf8InCpp String serviceName",
+                                 "const String serviceName")
+        report = classify([BASE_IFACE], [new])
+        self.assertEqual("breaking", report["class"])
+        kinds = [c["kind"] for c in report["changes"]]
+        self.assertEqual(["const_changed"], kinds, report)
+
+    def test_package_string_literal_not_misparsed(self):
+        src = BASE_IFACE.replace(
+            'serviceName = "thing"',
+            'serviceName = "package com.fake; import x.Y;"')
+        self.assertIn("com.rdk.test.IThing", dump(src))
 
     def test_const_changed_breaking(self):
         new = BASE_IFACE.replace('= "thing"', '= "other"')
         self.assertClass("breaking", [BASE_IFACE], [new],
-                         "enum_value_changed")
+                         "const_changed")
 
 
 class TestCli(unittest.TestCase):
@@ -209,7 +224,8 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             src_dir = os.path.join(d, "aidl")
             os.makedirs(src_dir)
-            with open(os.path.join(src_dir, "IThing.aidl"), "w") as f:
+            with open(os.path.join(src_dir, "IThing.aidl"), "w",
+                      encoding="utf-8") as f:
                 f.write(BASE_IFACE)
             old = os.path.join(d, "old.txt")
             new = os.path.join(d, "new.txt")

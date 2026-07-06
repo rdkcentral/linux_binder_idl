@@ -190,11 +190,12 @@ def parse_aidl(text, types):
     """Parse one .aidl file's text into the types dict."""
     text = strip_comments(text)
     package = ''
-    pm = re.search(r'\bpackage\s+([\w.]+)\s*;', text)
+    pm = re.search(r'^\s*package\s+([\w.]+)\s*;', text, re.M)
     if pm:
         package = pm.group(1)
     # Remove package/import statements, then parse top-level declarations.
-    text = re.sub(r'\b(package|import)\s+[\w.*]+\s*;', '', text)
+    text = re.sub(r'^\s*(package|import)\s+[\w.*]+\s*;', '', text,
+                  flags=re.M)
     for skind, item in _split_statements(text):
         if skind == 'decl':
             _parse_type(item[0], item[1], package, '', types)
@@ -320,22 +321,26 @@ def _diff_sequence(kind, where, old, new, added_kind, changes):
             })
 
 
-def _diff_enum(where, old, new, changes):
-    """Enums match by name; backing int is the wire contract, not order."""
+def _diff_enum(where, old, new, changes, prefix='enum_value'):
+    """Enums/consts match by declared name; the backing int / value is the
+    wire contract, not order. `prefix` names the change kinds
+    (enum_value_* or const_*)."""
     def as_map(members):
-        return {m.split('=')[0].strip(): m for m in members}
+        # Key by the declared identifier (last word before '='), so a
+        # const type change reports as one *_changed, not removed+added.
+        return {m.split('=')[0].split()[-1].strip(): m for m in members}
     om, nm = as_map(old), as_map(new)
     for name, member in sorted(om.items()):
         if name not in nm:
-            changes.append({'class': 'breaking', 'kind': 'enum_value_removed',
+            changes.append({'class': 'breaking', 'kind': prefix + '_removed',
                             'where': where, 'symbol': name, 'old': member})
         elif nm[name] != member:
-            changes.append({'class': 'breaking', 'kind': 'enum_value_changed',
+            changes.append({'class': 'breaking', 'kind': prefix + '_changed',
                             'where': where, 'symbol': name,
                             'old': member, 'new': nm[name]})
     for name, member in sorted(nm.items()):
         if name not in om:
-            changes.append({'class': 'major', 'kind': 'enum_value_added',
+            changes.append({'class': 'major', 'kind': prefix + '_added',
                             'where': where, 'symbol': member})
 
 
@@ -381,7 +386,7 @@ def diff_surface(old_text, new_text):
             n_const = [m for m in n['members'] if m.startswith('const ')]
             o_rest = [m for m in o['members'] if not m.startswith('const ')]
             n_rest = [m for m in n['members'] if not m.startswith('const ')]
-            _diff_enum(where, o_const, n_const, changes)  # consts: by name
+            _diff_enum(where, o_const, n_const, changes, prefix='const')
             member_kind = ('method_added' if o['kind'] == 'interface'
                            else 'field_added')
             _diff_sequence(o['kind'], where, o_rest, n_rest,
@@ -420,7 +425,7 @@ def main(argv):
             return 2
         text = dump_surface(args[0])
         if out:
-            with open(out, 'w') as f:
+            with open(out, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(text)
         else:
             sys.stdout.write(text)
@@ -435,7 +440,8 @@ def main(argv):
         try:
             texts = []
             for p in args:
-                with open(p, 'r') as f:
+                with open(p, 'r', encoding='utf-8',
+                          errors='replace') as f:
                     texts.append(f.read())
             report = diff_surface(texts[0], texts[1])
         except (OSError, ValueError) as e:
