@@ -148,6 +148,41 @@ aidl --lang=cpp -I. com/test/IFWManager.aidl --header_out gen/FWManager/include 
 #The stubs and proxies are generated in gen/FWManager and gen/FWManager/include
 ```
 
+### AIDL Surface Dump & Structural Diff
+
+`aidl_ops` can dump the declared surface of an AIDL tree (interfaces,
+parcelables, unions, enums — method signatures, field types, enum values with
+backing ints, annotations) as canonical, deterministic text, and classify the
+structural difference between two dumps. Declaration order is ABI (transaction
+ids / parcel order), so removals, changes and reorders classify as `breaking`,
+append-only additions as `major`, and identical surfaces as `none`. Doc
+comments are stripped at dump time, so comment-only edits produce
+byte-identical dumps.
+
+```bash
+# Dump a module's surface
+host/aidl_ops.py dump-surface path/to/module/aidl --out old.txt
+
+# ... edit the AIDL ...
+host/aidl_ops.py dump-surface path/to/module/aidl --out new.txt
+
+# Classify the change (text report, or --json for machine consumption)
+host/aidl_ops.py diff-surface old.txt new.txt --json
+# {
+#   "class": "major",
+#   "changes": [
+#     {"kind": "method_added",
+#      "where": "interface com.test.IFWManager",
+#      "symbol": "void gamma()"}
+#   ]
+# }
+```
+
+Consumers (e.g. rdk-halif-aidl's release audit) use this to validate that a
+declared version bump matches what the AIDL actually changed: `breaking` =>
+major bump, `major` (additive) => minor bump, equal dumps with differing
+sources => doc-only bump.
+
 ---
 
 ## Build Options
