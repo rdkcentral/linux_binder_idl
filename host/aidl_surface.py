@@ -58,6 +58,14 @@ _INT_RE = re.compile(r'^[+-]?(0[xX][0-9a-fA-F]+|\d+)$')
 # Parsing .aidl sources
 # ---------------------------------------------------------------------------
 
+def _string_end(text, i):
+    """Index just past the string literal starting at text[i] == '"'."""
+    j, n = i + 1, len(text)
+    while j < n and text[j] != '"':
+        j += 2 if text[j] == '\\' else 1
+    return min(j + 1, n)
+
+
 def strip_comments(text):
     """Remove // and /* */ comments, preserving string literals."""
     out = []
@@ -65,11 +73,9 @@ def strip_comments(text):
     while i < n:
         ch = text[i]
         if ch == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == '\\' else 1
-            out.append(text[i:j + 1])
-            i = j + 1
+            j = _string_end(text, i)
+            out.append(text[i:j])
+            i = j
         elif text.startswith('//', i):
             j = text.find('\n', i)
             i = n if j < 0 else j
@@ -84,13 +90,30 @@ def strip_comments(text):
 
 
 def _normalize(stmt):
-    """Collapse whitespace and normalize punctuation spacing."""
-    s = re.sub(r'\s+', ' ', stmt).strip()
-    s = re.sub(r'\s*([(),;=\[\]])\s*', r'\1', s)
-    s = s.replace(',', ', ').replace('=', ' = ')
-    s = re.sub(r'\](\w)', r'] \1', s)   # `Codec[] name`, not `Codec[]name`
-    # '(' after identifier stays tight; parameters got ', ' separators above.
-    return s.strip()
+    """Collapse whitespace and normalize punctuation spacing — but only
+    OUTSIDE string literals, so const/default string values are preserved
+    verbatim and a change inside a string always shows in the dump."""
+    out = ''
+    i, n = 0, len(stmt)
+    buf = ''
+
+    def flush(segment):
+        segment = re.sub(r'\s+', ' ', segment)
+        segment = re.sub(r'\s*([(),;=\[\]])\s*', r'\1', segment)
+        segment = segment.replace(',', ', ').replace('=', ' = ')
+        # `Codec[] name`, not `Codec[]name`; '(' after identifier stays tight.
+        return re.sub(r'\](\w)', r'] \1', segment)
+
+    while i < n:
+        if stmt[i] == '"':
+            j = _string_end(stmt, i)
+            out += flush(buf) + stmt[i:j]
+            buf = ''
+            i = j
+        else:
+            buf += stmt[i]
+            i += 1
+    return (out + flush(buf)).strip()
 
 
 def _split_statements(body):
@@ -103,10 +126,18 @@ def _split_statements(body):
     buf = ''
     while i < n:
         ch = body[i]
-        if ch == '{':
-            # matched-brace body for a nested declaration
+        if ch == '"':
+            # string literals are opaque: ; { } inside them are not structure
+            j = _string_end(body, i)
+            buf += body[i:j]
+            i = j
+        elif ch == '{':
+            # matched-brace body for a nested declaration (string-aware)
             depth, j = 1, i + 1
             while j < n and depth:
+                if body[j] == '"':
+                    j = _string_end(body, j)
+                    continue
                 depth += {'{': 1, '}': -1}.get(body[j], 0)
                 j += 1
             yield ('decl', (buf.strip(), body[i + 1:j - 1]))

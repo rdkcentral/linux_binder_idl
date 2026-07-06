@@ -210,7 +210,30 @@ class TestDiffRuleTable(unittest.TestCase):
         src = BASE_IFACE.replace(
             'serviceName = "thing"',
             'serviceName = "package com.fake; import x.Y;"')
-        self.assertIn("com.rdk.test.IThing", dump(src))
+        text = dump(src)
+        self.assertIn("com.rdk.test.IThing", text)
+        # the literal survives verbatim and the statement is not split on
+        # the embedded semicolon
+        self.assertIn('"package com.fake; import x.Y;"', text)
+        self.assertNotIn("com.fake", text.split('"')[0])
+
+    def test_structural_chars_in_string_literal(self):
+        src = BASE_IFACE.replace(
+            'serviceName = "thing"',
+            'serviceName = "a;b{c}d"')
+        text = dump(src)
+        self.assertIn('"a;b{c}d"', text)
+        # all members still parsed after the tricky const
+        self.assertIn("void alpha(in int a)", text)
+        self.assertIn("int beta(in String b, out long[] c)", text)
+
+    def test_whitespace_inside_string_is_a_real_change(self):
+        new = BASE_IFACE.replace('= "thing"', '= "th  ing"')
+        self.assertIn('"th  ing"', dump(new))   # preserved verbatim
+        report = classify([BASE_IFACE], [new])
+        self.assertEqual("breaking", report["class"])
+        self.assertEqual(["const_changed"],
+                         [c["kind"] for c in report["changes"]], report)
 
     def test_const_changed_breaking(self):
         new = BASE_IFACE.replace('= "thing"', '= "other"')
