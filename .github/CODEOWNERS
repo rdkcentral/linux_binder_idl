@@ -3,3 +3,6 @@
 # @global-owner1 and @global-owner2 will be requested for
 # review when someone opens a pull request.
 *       @rdkcentral/binder-aidl-maintainers
+
+# Test harnesses: request review from the AIDL HAL / binder tester.
+/tests/ @rdkcentral/binder-aidl-maintainers @agampa263
