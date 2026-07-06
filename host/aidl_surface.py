@@ -63,8 +63,8 @@ def strip_comments(text):
     out = []
     i, n = 0, len(text)
     while i < n:
-        c = text[i]
-        if c == '"':
+        ch = text[i]
+        if ch == '"':
             j = i + 1
             while j < n and text[j] != '"':
                 j += 2 if text[j] == '\\' else 1
@@ -78,7 +78,7 @@ def strip_comments(text):
             i = n if j < 0 else j + 2
             out.append(' ')
         else:
-            out.append(c)
+            out.append(ch)
             i += 1
     return ''.join(out)
 
@@ -102,8 +102,8 @@ def _split_statements(body):
     i, n = 0, len(body)
     buf = ''
     while i < n:
-        c = body[i]
-        if c == '{':
+        ch = body[i]
+        if ch == '{':
             # matched-brace body for a nested declaration
             depth, j = 1, i + 1
             while j < n and depth:
@@ -112,13 +112,13 @@ def _split_statements(body):
             yield ('decl', (buf.strip(), body[i + 1:j - 1]))
             buf = ''
             i = j
-        elif c == ';':
+        elif ch == ';':
             if buf.strip():
                 yield ('stmt', buf.strip())
             buf = ''
             i += 1
         else:
-            buf += c
+            buf += ch
             i += 1
     if buf.strip():
         yield ('stmt', buf.strip())
@@ -392,12 +392,12 @@ def diff_surface(old_text, new_text):
             _diff_sequence(o['kind'], where, o_rest, n_rest,
                            member_kind, changes)
     overall = 'none'
-    if any(c['class'] == 'breaking' for c in changes):
+    if any(change['class'] == 'breaking' for change in changes):
         overall = 'breaking'
-    elif any(c['class'] == 'major' for c in changes):
+    elif any(change['class'] == 'major' for change in changes):
         overall = 'major'
-    for c in changes:
-        del c['class']
+    for change in changes:
+        del change['class']
     return {'class': overall, 'changes': changes}
 
 
@@ -451,12 +451,13 @@ def main(argv):
             print(json.dumps(report, indent=2))
         else:
             print('class: %s' % report['class'])
-            for c in report['changes']:
-                line = '  %s  %s  %s' % (c['kind'], c['where'], c['symbol'])
-                if 'old' in c:
-                    line += '  [old: %s]' % c['old']
-                if 'new' in c:
-                    line += '  [new: %s]' % c['new']
+            for change in report['changes']:
+                line = '  %s  %s  %s' % (
+                    change['kind'], change['where'], change['symbol'])
+                if 'old' in change:
+                    line += '  [old: %s]' % change['old']
+                if 'new' in change:
+                    line += '  [new: %s]' % change['new']
                 print(line)
         return 0
     sys.stderr.write('aidl_surface: unknown operation %r\n' % op)
