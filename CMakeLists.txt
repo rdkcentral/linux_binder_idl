@@ -229,7 +229,7 @@ if (BUILD_WITH_LIBLOG)
         DIRECTORY
         ${HEADER_FILES_DIR}
 
-        DESTINATION ${CMAKE_INSTALL_INCDIR}
+        DESTINATION ${CMAKE_INSTALL_INCDIR}/mw
         FILES_MATCHING
         PATTERN "*.h"   # Specify the pattern to match header files
     )
@@ -295,7 +295,7 @@ set(HEADER_FILES_DIR ${LIBBASE_DIR}/include/android-base)
 install(
     DIRECTORY ${HEADER_FILES_DIR}
 
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
+    DESTINATION ${CMAKE_INSTALL_INCDIR}/mw
     FILES_MATCHING
     PATTERN "*.h"   # Specify the pattern to match header files
 )
@@ -401,7 +401,7 @@ install(
     DIRECTORY
     ${HEADER_FILES_DIR}
 
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
+    DESTINATION ${CMAKE_INSTALL_INCDIR}/mw
     FILES_MATCHING
     PATTERN "*.h"   # Specify the pattern to match header files
 )
@@ -475,7 +475,7 @@ install(
     DIRECTORY
     ${HEADER_FILES_DIR}
 
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
+    DESTINATION ${CMAKE_INSTALL_INCDIR}/mw
     FILES_MATCHING
     PATTERN "*.h"   # Specify the pattern to match header files
 )
@@ -614,7 +614,7 @@ install(
     DIRECTORY
     ${HEADER_FILES_DIR}
 
-    DESTINATION ${CMAKE_INSTALL_INCDIR}
+    DESTINATION ${CMAKE_INSTALL_INCDIR}/mw
     FILES_MATCHING
     PATTERN "*.h"   # Specify the pattern to match header files
 )
@@ -669,7 +669,7 @@ install(
     servicemanagerrdk
 
     RUNTIME
-    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    DESTINATION ${CMAKE_INSTALL_BINDIR}/mw
 )
 
 if (BUILD_ENV_HOST)
@@ -833,6 +833,6 @@ if (BUILD_BINDER_DEVICE_UTILITY)
         binder-device
 
         RUNTIME
-        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        DESTINATION ${CMAKE_INSTALL_BINDIR}/mw
     )
 endif ()
