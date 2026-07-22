@@ -196,23 +196,23 @@ if (BUILD_WITH_LIBLOG)
     )
 
     if (BUILD_SHARED_LIB)
-        add_library(log SHARED ${LIBLOG_SRCS})
+        add_library(logrdk SHARED ${LIBLOG_SRCS})
     else ()
-        add_library(log STATIC ${LIBLOG_SRCS})
+        add_library(logrdk STATIC ${LIBLOG_SRCS})
     endif ()
 
-    target_compile_options(log PRIVATE
+    target_compile_options(logrdk PRIVATE
         -Wall -Wextra -std=c++17 -D__linux__ -DLIBLOG_LOG_TAG=1006 -DSNET_EVENT_LOG_TAG=1397638484 -DANDROID_DEBUGGABLE=0
     )
 
-    target_include_directories(log PRIVATE
+    target_include_directories(logrdk PRIVATE
         ${LIBLOG_DIR}/include
     )
 
     if (BUILD_SHARED_LIB)
         # Install the liblog library
         install(TARGETS
-            log
+            logrdk
 
             LIBRARY
             DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -262,27 +262,27 @@ set(LIBBASE_SRCS
 )
 
 if (BUILD_SHARED_LIB)
-    add_library(base SHARED ${LIBBASE_SRCS})
+    add_library(baserdk SHARED ${LIBBASE_SRCS})
 else ()
-    add_library(base STATIC ${LIBBASE_SRCS})
+    add_library(baserdk STATIC ${LIBBASE_SRCS})
 endif ()
 
-target_compile_options(base PRIVATE
+target_compile_options(baserdk PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__ -D_XOPEN_SOURCE=600 -D_FILE_OFFSET_BITS=64
 )
 
-target_include_directories(base PRIVATE
+target_include_directories(baserdk PRIVATE
     ${LIBBASE_DIR}/include
     ${LIBLOG_DIR}/include
     ${LIBFMT_DIR}/include
 )
 
-target_link_libraries(base PRIVATE log)
+target_link_libraries(baserdk PRIVATE logrdk)
 
 if (BUILD_SHARED_LIB)
     # Install the libbase library
     install(TARGETS
-        base
+        baserdk
 
         LIBRARY
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -316,20 +316,20 @@ set(LIBCUTILS_SOCKETS_SRCS
 )
 
 if (BUILD_SHARED_LIB)
-    add_library(cutils_sockets SHARED ${LIBCUTILS_SOCKETS_SRCS})
+    add_library(cutils_socketsrdk SHARED ${LIBCUTILS_SOCKETS_SRCS})
 else ()
-    add_library(cutils_sockets STATIC ${LIBCUTILS_SOCKETS_SRCS})
+    add_library(cutils_socketsrdk STATIC ${LIBCUTILS_SOCKETS_SRCS})
 endif ()
 
-target_include_directories(cutils_sockets PRIVATE
+target_include_directories(cutils_socketsrdk PRIVATE
     ${LIBCUTILS_DIR}/include
 )
 
-target_compile_options(cutils_sockets PRIVATE
+target_compile_options(cutils_socketsrdk PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__
 )
 
-target_link_libraries(cutils_sockets PRIVATE log)
+target_link_libraries(cutils_socketsrdk PRIVATE logrdk)
 
 ###########################################################
 # Android libcutils
@@ -362,29 +362,29 @@ set(LIBCUTILS_SRCS
 )
 
 if (BUILD_SHARED_LIB)
-    add_library(cutils SHARED ${LIBCUTILS_SRCS})
+    add_library(cutilsrdk SHARED ${LIBCUTILS_SRCS})
 else ()
-    add_library(cutils STATIC ${LIBCUTILS_SRCS})
+    add_library(cutilsrdk STATIC ${LIBCUTILS_SRCS})
 endif ()
 
-target_compile_options(cutils PRIVATE
+target_compile_options(cutilsrdk PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__ -Wno-psabi
 )
 
-target_include_directories(cutils PRIVATE
+target_include_directories(cutilsrdk PRIVATE
     ${LIBCUTILS_DIR}/include
     ${LIBLOG_DIR}/include
     ${LIBBASE_DIR}/include
     ${LIBPROCESSGROUP_DIR}/include
 )
 
-target_link_libraries(cutils PRIVATE log base cutils_sockets dl)
+target_link_libraries(cutilsrdk PRIVATE logrdk baserdk cutils_socketsrdk dl)
 
 if (BUILD_SHARED_LIB)
     # Install the libcutils_sockets and libcutils library
     install(TARGETS
-        cutils_sockets
-        cutils
+        cutils_socketsrdk
+        cutilsrdk
 
         LIBRARY
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -436,16 +436,16 @@ set(LIBUTILS_SRCS
 )
 
 if (BUILD_SHARED_LIB)
-    add_library(utils SHARED ${LIBUTILS_SRCS})
+    add_library(utilsrdk SHARED ${LIBUTILS_SRCS})
 else ()
-    add_library(utils STATIC ${LIBUTILS_SRCS})
+    add_library(utilsrdk STATIC ${LIBUTILS_SRCS})
 endif ()
 
-target_compile_options(utils PRIVATE
+target_compile_options(utilsrdk PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__ -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
 )
 
-target_include_directories(utils PRIVATE
+target_include_directories(utilsrdk PRIVATE
     ${LIBUTILS_DIR}/include
     ${LIBSYSTEM_DIR}/include
     ${LIBLOG_DIR}/include
@@ -453,12 +453,12 @@ target_include_directories(utils PRIVATE
     ${LIBCUTILS_DIR}/include
 )
 
-target_link_libraries(utils PRIVATE log cutils)
+target_link_libraries(utilsrdk PRIVATE logrdk cutilsrdk)
 
 if (BUILD_SHARED_LIB)
     # Install the libutils library
     install(TARGETS
-        utils
+        utilsrdk
 
         LIBRARY
         DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -532,12 +532,12 @@ if (BUILD_ENV_YOCTO)
         ${BINDER_AIDL_GEN_DIR}/android/os/ConnectionInfo.cpp
     )
 
-    add_library(binder SHARED
+    add_library(binderrdk SHARED
         ${LIBBINDER_SRCS}
         ${BINDER_AIDL_SRCS}
     )
 
-    target_include_directories(binder PRIVATE
+    target_include_directories(binderrdk PRIVATE
         ${BINDER_AIDL_GEN_DIR}/include
     )
 else ()
@@ -555,19 +555,19 @@ else ()
 
     AidlGenerator(BINDER_AIDL "${BINDER_DIR}/aidl" "${BINDER_AIDL_SRCS}")
 
-    add_library(binder SHARED
+    add_library(binderrdk SHARED
         ${LIBBINDER_SRCS}
         ${BINDER_AIDL_OUTPUTS}
     )
 
-    add_dependencies(binder aidl)
+    add_dependencies(binderrdk aidl)
 
-    target_include_directories(binder PRIVATE
+    target_include_directories(binderrdk PRIVATE
         ${GENERATED_DIR}/BINDER_AIDL/include
     )
 endif ()
 
-target_include_directories(binder PRIVATE
+target_include_directories(binderrdk PRIVATE
     ${BINDER_DIR}/include
     ${BINDER_DIR}/ndk/include_cpp
     ${LIBUTILS_DIR}/include
@@ -581,24 +581,24 @@ target_include_directories(binder PRIVATE
 
 if (TARGET_LIB32_VERSION)
     message("Building 32bit binder library")
-    target_compile_options(binder PRIVATE
+    target_compile_options(binderrdk PRIVATE
         -Wall -Wextra -std=c++17 -D__linux__ -Wextra-semi -Wzero-as-null-pointer-constant
         -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
         -DBINDER_IPC_32BIT=1
     )
 else ()
     message("Building 64bit binder library")
-    target_compile_options(binder PRIVATE
+    target_compile_options(binderrdk PRIVATE
         -Wall -Wextra -std=c++17 -D__linux__ -Wextra-semi -Wzero-as-null-pointer-constant
         -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
     )
 endif ()
 
-target_link_libraries(binder PRIVATE log base cutils utils pthread)
+target_link_libraries(binderrdk PRIVATE logrdk baserdk cutilsrdk utilsrdk pthread)
 
 # Install the libbinder library
 install(TARGETS
-    binder
+    binderrdk
 
     LIBRARY
     DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -628,9 +628,9 @@ set(SERVICEMANAGER_SRCS
     ${SERVICEMANAGER_DIR}/ServiceManager.cpp
 )
 
-add_executable(servicemanager ${SERVICEMANAGER_SRCS})
+add_executable(servicemanagerrdk ${SERVICEMANAGER_SRCS})
 
-target_compile_options(servicemanager PRIVATE
+target_compile_options(servicemanagerrdk PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__ -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
 )
 
@@ -638,7 +638,7 @@ target_compile_options(servicemanager PRIVATE
 #    -D__linux__ -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
 #)
 
-target_include_directories(servicemanager PRIVATE
+target_include_directories(servicemanagerrdk PRIVATE
     ${BINDER_DIR}/include
     ${BINDER_DIR}/include/android
     ${BINDER_DIR}/ndk/include_cpp
@@ -652,21 +652,21 @@ target_include_directories(servicemanager PRIVATE
 )
 
 if (BUILD_ENV_YOCTO)
-    target_include_directories(servicemanager PRIVATE
+    target_include_directories(servicemanagerrdk PRIVATE
         ${BINDER_AIDL_GEN_DIR}/include
     )
 else ()
-    target_include_directories(servicemanager PRIVATE
+    target_include_directories(servicemanagerrdk PRIVATE
         ${GENERATED_DIR}/BINDER_AIDL/include
     )
 endif ()
 
-target_link_libraries(servicemanager PRIVATE binder utils cutils base log pthread)
+target_link_libraries(servicemanagerrdk PRIVATE binderrdk utilsrdk cutilsrdk baserdk logrdk pthread)
 
 # Install the servicemanager binary
 install(
     TARGETS
-    servicemanager
+    servicemanagerrdk
 
     RUNTIME
     DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -777,8 +777,8 @@ if (BUILD_ENV_HOST)
     )
 
     target_link_libraries(aidl-common PRIVATE
-        base
-        cutils
+        baserdk
+        cutilsrdk
         gtest
         fmt
     )
@@ -798,8 +798,8 @@ if (BUILD_ENV_HOST)
 
     target_link_libraries(aidl PRIVATE
         aidl-common
-        base
-        log
+        baserdk
+        logrdk
     )
 
     add_executable(aidl-cpp ${AIDL_DIR}/main.cpp)
@@ -817,8 +817,8 @@ if (BUILD_ENV_HOST)
 
     target_link_libraries(aidl-cpp PRIVATE
         aidl-common
-        base
-        log
+        baserdk
+        logrdk
     )
 endif ()
 
