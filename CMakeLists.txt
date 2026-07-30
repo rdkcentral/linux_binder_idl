@@ -628,9 +628,9 @@ set(SERVICEMANAGER_SRCS
     ${SERVICEMANAGER_DIR}/ServiceManager.cpp
 )
 
-add_executable(servicemanagerrdk ${SERVICEMANAGER_SRCS})
+add_executable(servicemanager ${SERVICEMANAGER_SRCS})
 
-target_compile_options(servicemanagerrdk PRIVATE
+target_compile_options(servicemanager PRIVATE
     -Wall -Wextra -std=c++17 -D__linux__ -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
 )
 
@@ -638,7 +638,7 @@ target_compile_options(servicemanagerrdk PRIVATE
 #    -D__linux__ -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
 #)
 
-target_include_directories(servicemanagerrdk PRIVATE
+target_include_directories(servicemanager PRIVATE
     ${BINDER_DIR}/include
     ${BINDER_DIR}/include/android
     ${BINDER_DIR}/ndk/include_cpp
@@ -652,21 +652,21 @@ target_include_directories(servicemanagerrdk PRIVATE
 )
 
 if (BUILD_ENV_YOCTO)
-    target_include_directories(servicemanagerrdk PRIVATE
+    target_include_directories(servicemanager PRIVATE
         ${BINDER_AIDL_GEN_DIR}/include
     )
 else ()
-    target_include_directories(servicemanagerrdk PRIVATE
+    target_include_directories(servicemanager PRIVATE
         ${GENERATED_DIR}/BINDER_AIDL/include
     )
 endif ()
 
-target_link_libraries(servicemanagerrdk PRIVATE binderrdk utilsrdk cutilsrdk baserdk logrdk pthread)
+target_link_libraries(servicemanager PRIVATE binderrdk utilsrdk cutilsrdk baserdk logrdk pthread)
 
 # Install the servicemanager binary
 install(
     TARGETS
-    servicemanagerrdk
+    servicemanager
 
     RUNTIME
     DESTINATION ${CMAKE_INSTALL_BINDIR}/mw
