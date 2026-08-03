@@ -89,8 +89,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 
 ### Kernel & Runtime Requirements
 
-- **Kernel version:** 5.16+ with `CONFIG_ANDROID_BINDER_IPC=y`
-- **32-bit userspace on 64-bit kernel:** Common in embedded; requires `CONFIG_ANDROID_BINDER_IPC_32BIT=y` in kernel
+- **Kernel version:** 4.9 floor, through 5.16 and later, with `CONFIG_ANDROID_BINDER_IPC=y`
+- **Wire protocol:** set by the kernel's `CONFIG_ANDROID_BINDER_IPC_32BIT` (`=y` → protocol 7, unset/absent → protocol 8); libbinder must be built to match or `ProcessState` init fails
+- **32-bit userspace on 64-bit kernel:** Common in embedded; protocol **8** — `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and was removed in 4.18, so it cannot be set on a 64-bit kernel
 - **Binder device:** `/dev/binder` must exist (via binderfs or static device node)
 - **Servicemanager:** Must run before any binder clients start; use systemd service in production
 - **Systemd service:** `SYSTEMD_AUTO_ENABLE=enable` in Yocto ensures auto-start on boot
@@ -112,10 +113,13 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets
 - `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets (default auto-detected)
 - Never set both 32-bit and 64-bit flags simultaneously
+- **Bitness and wire protocol are independent axes:**
+  - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture
+  - `BINDER_IPC_32BIT` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
+  - `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT=ON` (protocol 7); a 64-bit build rejects `BINDER_IPC_32BIT=ON`
 - **32-bit userspace on 64-bit kernel:** Common in embedded systems for memory efficiency
-  - Build with `TARGET_LIB32_VERSION=ON` even if kernel is 64-bit
-  - Requires kernel config `CONFIG_ANDROID_BINDER_IPC_32BIT=y`
-  - Match build to *userspace* architecture, not kernel architecture
+  - Build with `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` (protocol 8)
+  - The `OFF` is not optional here — the 32-bit default would otherwise give protocol 7 against a protocol-8 kernel
 
 ## Testing & Validation
 

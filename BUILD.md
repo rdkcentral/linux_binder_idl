@@ -207,19 +207,18 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Build 64-bit libraries | Auto-detect | Use for aarch64, x86_64 |
 | `TARGET_LIB32_VERSION` | Build 32-bit libraries | `OFF` | Use for armhf, i686 |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows compile bitness | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 
-**Important - 32-bit Userspace on 64-bit Kernel:**
+**Important - these are two independent axes:**
 
-Many embedded systems run 32-bit userspace applications on a 64-bit kernel for memory efficiency. In this configuration:
+- `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the **ELF ABI**, and follow your *userspace* architecture.
+- `BINDER_IPC_32BIT` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
 
-- **Kernel**: 64-bit (e.g., aarch64 kernel)
-- **Userspace**: 32-bit (e.g., armhf libraries and applications)
-- **Build Configuration**: Use `TARGET_LIB32_VERSION=ON` to build 32-bit binder libraries
-- **Kernel Requirement**: Kernel must have `CONFIG_ANDROID_BINDER_IPC_32BIT=y` enabled
+**32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is `TARGET_LIB32_VERSION=ON` with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path; `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and cannot be enabled there at all.
 
-The 64-bit kernel handles syscall translation automatically. Build the userspace libraries to match your **userspace architecture**, not the kernel architecture.
+Because `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON`, this configuration must pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
 
 #### Installation Paths (All Optional)
 
@@ -266,13 +265,14 @@ cmake -S . -B build-target \
     -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
     -DBUILD_HOST_AIDL=OFF \
     -DTARGET_LIB32_VERSION=ON \
+    -DBINDER_IPC_32BIT=OFF \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
 cmake --build build-target -j$(nproc)
 cmake --install build-target
 ```
 
-**Note:** This 32-bit build works on both 32-bit kernels and 64-bit kernels (with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`).
+**Note:** `-DBINDER_IPC_32BIT=OFF` gives protocol 8, which is what a 64-bit kernel serves. Drop it (or pass `=ON`) only for a 32-bit kernel built with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`.
 
 **Direct CMake: Build AIDL Compiler (Architecture Team - Advanced Use Only):**
 
@@ -422,17 +422,43 @@ version is not exactly the library's. The version is selected at build time by
 A 32-bit process can run protocol **8** (64-bit binder handles inside a 32-bit
 process) — that is how a 32-bit and a 64-bit process interoperate on one kernel.
 
+### The kernel picks the protocol; the build follows it
+
+The kernel side is `CONFIG_ANDROID_BINDER_IPC_32BIT`, and it is not a free
+choice. Upstream `drivers/android/Kconfig` declares it
+`depends on !64BIT && ANDROID_BINDER_IPC` through 4.17, and removes it entirely
+from 4.18 onward. Within the supported range (4.9 → 5.16) that leaves exactly
+one protocol-7 platform: a **32-bit kernel at 4.17 or older**. Every other
+kernel serves protocol 8 — including a 64-bit kernel running 32-bit userspace,
+which reaches the driver over the compat path.
+
+Read the kernel, then set the build flag to match it:
+
+| Kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | libbinder build | Protocol |
+| --- | --- | --- | --- |
+| 32-bit, ≤ 4.17 | `=y` | `-DBINDER_IPC_32BIT=ON` | 7 |
+| 32-bit, ≤ 4.17 | unset | `-DBINDER_IPC_32BIT=OFF` | 8 |
+| 64-bit, any version | unselectable (`depends on !64BIT`) | `-DBINDER_IPC_32BIT=OFF` | 8 |
+| any, ≥ 4.18 | option removed | `-DBINDER_IPC_32BIT=OFF` | 8 |
+
+Read it off a device with `zcat /proc/config.gz | grep BINDER`. A mismatch is
+fatal when libbinder opens the driver, and there is no fallback:
+
+```
+Binder driver protocol(7) does not match user space protocol(8)!
+```
+
 ### Supported platform configurations
 
 | Platform | MW | Vendor | Protocol | Build | Kernel |
 | --- | --- | --- | --- | --- | --- |
-| All-32-bit userspace | 32-bit | 32-bit | 7 | `TARGET_LIB32_VERSION=ON` (sets `BINDER_IPC_32BIT=1`) | `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
-| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | 32-bit compile, protocol 8 | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset |
+| All-32-bit userspace | 32-bit | 32-bit | 7 | `-DTARGET_LIB32_VERSION=ON` (defaults `BINDER_IPC_32BIT=ON`) | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
+| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
+| All-64-bit userspace | 64-bit | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 
-This toolchain currently produces the **all-32-bit (protocol 7)** build; the
-**mixed (protocol 8)** configuration requires decoupling the 32-bit compile from
-`BINDER_IPC_32BIT` — tracked in
-[#42](https://github.com/rdkcentral/linux_binder_idl/issues/42).
+`TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON` for backward
+compatibility, so the mixed configuration passes `-DBINDER_IPC_32BIT=OFF`
+explicitly. A 64-bit build rejects `BINDER_IPC_32BIT=ON` outright.
 
 ### Supported kernel range
 
@@ -469,20 +495,25 @@ The target device kernel must have Binder support enabled. Required kernel confi
 CONFIG_ANDROID=y
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
-CONFIG_ANDROID_BINDER_IPC_32BIT=y       # REQUIRED for 32-bit userspace (even on 64-bit kernel)
 # CONFIG_ANDROID_BINDER_IPC_SELFTEST is not set
 CONFIG_ASHMEM=y
 CONFIG_ANDROID_BINDERFS=y               # Required for Ubuntu/desktop Linux
 ```
 
-**Critical: 32-bit Userspace Configuration**
+**Critical: read `CONFIG_ANDROID_BINDER_IPC_32BIT` off the device**
 
-`CONFIG_ANDROID_BINDER_IPC_32BIT=y` is **required** in these scenarios:
+This option sets the kernel's binder wire protocol, and the libbinder you install must be built to match — protocol 7 when it is `=y`, protocol 8 otherwise. It is a property of the kernel you were given, not something you choose per userspace layer:
 
-- Pure 32-bit system (32-bit kernel + 32-bit userspace)
-- Mixed architecture system (64-bit kernel + 32-bit userspace) - **common in embedded systems**
+```bash
+zcat /proc/config.gz | grep BINDER
+```
 
-A 64-bit kernel with this option enabled can support both 32-bit and 64-bit userspace applications simultaneously. The kernel handles the necessary syscall translation and data structure compatibility.
+- `=y` → the kernel serves protocol **7**. Build libbinder with `-DBINDER_IPC_32BIT=ON`.
+- unset or absent → the kernel serves protocol **8**. Build libbinder with `-DBINDER_IPC_32BIT=OFF`.
+
+Only a **32-bit kernel at 4.17 or older** can be protocol 7: upstream declares the option `depends on !64BIT` and removed it in 4.18. A 64-bit kernel is always protocol 8 and serves 32-bit userspace over the compat path.
+
+Every process on the device — 32-bit MW and 64-bit vendor alike — must speak the same protocol as the kernel. A wrong build fails at `ProcessState` init with `Binder driver protocol(N) does not match user space protocol(M)!` and does not fall back.
 
 **Note:** Some Ubuntu kernels (5.16.20) have SELinux context issues with binder. A patch may be required for `drivers/android/binder.c`.
 
