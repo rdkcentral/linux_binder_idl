@@ -205,16 +205,20 @@ The following tables list CMake variables for **direct CMake invocation in produ
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `TARGET_LIB64_VERSION` | Build 64-bit libraries | Auto-detect | Use for aarch64, x86_64 |
-| `TARGET_LIB32_VERSION` | Build 32-bit libraries | `OFF` | Use for armhf, i686 |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows compile bitness | Must match the target kernel |
+| `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
+| `TARGET_LIB32_VERSION` | Declare a 32-bit target | `ON` | Use for armhf, i686 |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 
+**The ELF class comes from your compiler, not from these flags.** `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` add no `-m32` / `-m64`; they declare which target you are building for, and their functional effect is to set the default for `BINDER_IPC_32BIT`. Bitness follows `CC` / `CXX` (or the Yocto toolchain).
+
 **Important - these are two independent axes:**
 
-- `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the **ELF ABI**, and follow your *userspace* architecture.
+- `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` declare the **target ABI**, and follow your *userspace* architecture.
 - `BINDER_IPC_32BIT` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
+
+Because `TARGET_LIB32_VERSION` defaults to `ON`, an unqualified build produces **protocol 7**. Any protocol-8 target must pass `-DBINDER_IPC_32BIT=OFF` explicitly, including a native x86_64 build.
 
 **32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is `TARGET_LIB32_VERSION=ON` with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path; `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and cannot be enabled there at all.
 
