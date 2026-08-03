@@ -39,20 +39,30 @@ A single sentinel line is emitted and parsed by the host runner:
 #    ./tests/qemu/run-qemu-test.sh --kernel /path/to/bzImage
 ```
 
-The runner builds the repo's own binder target libraries
-(`build-linux-binder-aidl.sh`) for the guest userspace and assembles a small
-initramfs (busybox + libbinder/libutils + servicemanager + the test). It **skips cleanly** (not a failure) when QEMU,
-busybox, a compiler, or kernels are absent — so it never breaks a default run.
+For each kernel the runner builds the repo's own binder target libraries
+(`build-linux-binder-aidl.sh`) **at that kernel's protocol**, into the run's own
+work dir, and assembles a matching initramfs (busybox + libbinder/libutils +
+servicemanager + the test). Variants are cached across the kernels that share
+them. It **skips cleanly** (not a failure) when QEMU, busybox, a compiler, a
+32-bit toolchain, or kernels are absent — so it never breaks a default run.
 
 ## Matrix
 
 `build-kernels.sh` default versions span the supported range (4.9 floor → 5.16),
-one stable point release per minor. Protocol/bitness axes:
+one stable point release per minor, plus the legacy protocol-7 variant.
 
-| Variant | Kernel fragment | Userspace |
-| --- | --- | --- |
-| protocol 8 (default, mixed 32/64) | `kconfig/binder.fragment` | libbinder built without `BINDER_IPC_32BIT` |
-| protocol 7 (legacy all-32-bit) | `+ kconfig/binder-ipc32.fragment` (append `:ipc32` to a version) | libbinder built with `-DBINDER_IPC_32BIT=1` |
+| Variant | Guest | Kernel fragment | Userspace |
+| --- | --- | --- | --- |
+| protocol 8 (default, mixed 32/64) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
+| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32` to a version) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
+
+Protocol 7 is only reachable on a **32-bit kernel at 4.17 or older**: upstream
+declares `CONFIG_ANDROID_BINDER_IPC_32BIT` as `depends on !64BIT` and removed it
+in 4.18. `build-kernels.sh` therefore builds `:ipc32` variants as an i386 guest,
+rejects `:ipc32` on 4.18+, and verifies the option survived the config merge
+before accepting the kernel. Each kernel directory carries a `variant` file
+(`arch=`, `protocol=`) that the runner uses to pick the QEMU binary and the
+matching userspace.
 
 ## Extending to a HALIF interface
 
@@ -65,8 +75,8 @@ via `I<Iface>::asInterface(...)`, and assert a method result.
 
 | File | Role |
 | --- | --- |
-| `build-kernels.sh` | Buildroot matrix kernel builder → `kernels/<ver>/bzImage` |
-| `run-qemu-test.sh` | builds SDK + test, assembles initramfs, boots each kernel, reports |
+| `build-kernels.sh` | Buildroot matrix kernel builder → `kernels/<label>/{bzImage,variant}` |
+| `run-qemu-test.sh` | builds a per-protocol SDK + test, assembles initramfs, boots each kernel, reports |
 | `binder_roundtrip.cpp` | in-guest binder round-trip (+ HALIF hook) |
 | `guest-init.sh` | guest PID 1: provision binder device, run test, poweroff |
 | `kconfig/binder.fragment` | kernel binder config (protocol 8) |
