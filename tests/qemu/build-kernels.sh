@@ -118,9 +118,16 @@ for spec in ${VERSIONS}; do
         frags="${FRAGMENT}"
     fi
 
+    # Buildroot defaults BR2_KERNEL_HEADERS_AS_KERNEL=y, taking the toolchain's
+    # kernel headers from the custom kernel — then cross-checks them against the
+    # selected header *series*, which defaults to the newest Buildroot knows.
+    # Building anything but that newest series aborts with "Incorrect selection
+    # of kernel headers", so pin the series to the kernel under build.
+    hdr="${ver%%.*}_$(x="${ver#*.}"; echo "${x%%.*}")"
     cat > "${o}.config" <<EOF
 ${br_arch}
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_${hdr}=y
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="${ver}"
