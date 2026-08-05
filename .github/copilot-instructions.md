@@ -61,7 +61,10 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Separate build trees:** `build-host/` for AIDL compiler, `build-target/` for runtime libs (never mix)
 - **Build environment detection:** CMake auto-detects Yocto via `OECORE_*` environment variables (lines 145–150)
 - **AidlGenerator macro:** CMakeLists.txt defines macro for generating stubs/proxies (line 242+); used by examples but not production
-- **Default architecture:** 64-bit auto-detected unless `TARGET_LIB32_VERSION=ON` explicitly set (line 172)
+- **Default architecture:** 32-bit. `TARGET_LIB32_VERSION` defaults to `ON` whenever it is undefined
+  (`CMakeLists.txt:201-203`), independent of the host or target architecture. Build 64-bit by setting
+  `TARGET_LIB64_VERSION=ON` or `TARGET_LIB32_VERSION=OFF`. Because `BINDER_IPC_32BIT` follows the compile
+  bitness by default, an unqualified build produces protocol 7 — including a native x86_64 build
 
 ### Source Code Management
 
@@ -110,8 +113,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
   ./build-linux-binder-aidl.sh
   ```
 - **Direct CMake:** Pass compiler and flags explicitly (see Production/Yocto section above)
-- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets
-- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets (default auto-detected)
+- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — this is the default on every host
+- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — set it explicitly; the build
+  does not read the host or target architecture (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
 - Never set both 32-bit and 64-bit flags simultaneously
 - **Bitness and wire protocol are independent axes:**
   - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture

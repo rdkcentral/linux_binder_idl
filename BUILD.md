@@ -121,7 +121,8 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `CXXFLAGS` | C++ compiler flags | None |
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
-| `TARGET_LIB32_VERSION` | Build 32-bit target | `OFF` |
+| `TARGET_LIB32_VERSION` | Build 32-bit target | `ON` |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` |
 
 ### Examples
 
