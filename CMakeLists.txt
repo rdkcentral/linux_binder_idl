@@ -227,6 +227,26 @@ if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
         "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit build; a 64-bit binder "
         "library must use protocol 8 — set -DBINDER_IPC_32BIT=OFF for 64-bit.")
 endif ()
+# The check above compares two DECLARED flags, so it cannot see a toolchain that
+# disagrees with them. TARGET_LIB32_VERSION adds no -m32; the ELF class comes from
+# CC/CXX alone. An unqualified build therefore declares 32-bit (the default),
+# defaults BINDER_IPC_32BIT to ON, and — on a 64-bit compiler — emits a 64-bit
+# library speaking protocol 7. Under BINDER_IPC_32BIT the UAPI narrows
+# binder_uintptr_t to 32 bits, so a 64-bit pointer model truncates its handles,
+# and no 64-bit kernel serves protocol 7 in any case (drivers/android/Kconfig
+# marks CONFIG_ANDROID_BINDER_IPC_32BIT `depends on !64BIT`). Compare against the
+# toolchain, not the declaration.
+if (BINDER_IPC_32BIT AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR
+        "BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain "
+        "(CMAKE_SIZEOF_VOID_P=${CMAKE_SIZEOF_VOID_P}). Protocol 7 carries 32-bit "
+        "binder handles and cannot represent 64-bit pointers, and no 64-bit kernel "
+        "serves it. Either cross-compile with a 32-bit toolchain, or select "
+        "protocol 8 with -DBINDER_IPC_32BIT=OFF. If you did not set "
+        "BINDER_IPC_32BIT, it followed TARGET_LIB32_VERSION, which defaults to ON "
+        "regardless of architecture — pass -DTARGET_LIB64_VERSION=ON for a 64-bit "
+        "target.")
+endif ()
 
 ###########################################################
 # Set all the path variables

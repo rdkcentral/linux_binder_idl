@@ -498,7 +498,10 @@ test_5() {
 test_6() {
     clean_build_state
     echo "Building target binder libraries (this may take a minute)..."
-    if ./build-linux-binder-aidl.sh 2>&1 | tee /tmp/target_build.log > /dev/null; then
+    # This runs natively on an x86_64 host, so declare the 64-bit target. The
+    # wrapper defaults TARGET_LIB32_VERSION to ON, which would default the wire
+    # protocol to 7 against a 64-bit toolchain — a combination CMake now rejects.
+    if TARGET_LIB32_VERSION=OFF ./build-linux-binder-aidl.sh 2>&1 | tee /tmp/target_build.log > /dev/null; then
         print_pass "Target binder libraries build completed"
         check_warnings_errors /tmp/target_build.log "Target build"
 
@@ -694,7 +697,7 @@ test_12() {
 
     if [ ! -x ./out/target/bin/servicemanager ]; then
         echo "==> No baseline target build found, building first..."
-        if ! ./build-linux-binder-aidl.sh >/tmp/target_build.log 2>&1; then
+        if ! TARGET_LIB32_VERSION=OFF ./build-linux-binder-aidl.sh >/tmp/target_build.log 2>&1; then
             print_fail "Baseline target build failed"
             tail -20 /tmp/target_build.log | tee -a "${TEST_LOG}"
             return 1
@@ -702,7 +705,7 @@ test_12() {
     fi
 
     echo "Testing incremental target build..."
-    if ./build-linux-binder-aidl.sh >/tmp/target_rebuild.log 2>&1; then
+    if TARGET_LIB32_VERSION=OFF ./build-linux-binder-aidl.sh >/tmp/target_rebuild.log 2>&1; then
         print_pass "Target incremental build succeeded"
     else
         print_fail "Target incremental build failed"
