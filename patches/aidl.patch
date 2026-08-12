@@ -75,10 +75,20 @@ index 9ccad24..e25d889 100644
  
  class AidlLocation {
 diff --git a/generate_cpp.cpp b/generate_cpp.cpp
-index 988ac2b..eb0723e 100644
+index 988ac2b..c000705 100644
 --- a/generate_cpp.cpp
 +++ b/generate_cpp.cpp
-@@ -897,10 +897,11 @@ void GenerateInterfaceClassDecl(CodeWriter& out, const AidlInterface& interface,
+@@ -760,6 +760,9 @@ void GenerateClientClassDecl(CodeWriter& out, const AidlInterface& interface,
+ void GenerateClientHeader(CodeWriter& out, const AidlInterface& interface,
+                           const AidlTypenames& typenames, const Options& options) {
+   out << "#pragma once\n\n";
++  if (!options.Hash().empty()) {
++    out << "#include <mutex>\n";
++  }
+   out << "#include <" << kIBinderHeader << ">\n";
+   out << "#include <" << kIInterfaceHeader << ">\n";
+   out << "#include <utils/Errors.h>\n";
+@@ -897,10 +900,11 @@ void GenerateInterfaceClassDecl(CodeWriter& out, const AidlInterface& interface,
    out.Indent();
    out << "DECLARE_META_INTERFACE(" << ClassName(interface, ClassNames::BASE) << ")\n";
    if (options.Version() > 0) {
