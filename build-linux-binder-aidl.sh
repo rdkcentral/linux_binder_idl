@@ -75,7 +75,9 @@ ROOT_DIR="${SCRIPT_DIR}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-target}"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out/target}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-TARGET_LIB32="${TARGET_LIB32_VERSION:-ON}"
+# Left empty when the caller did not state one; resolved from the toolchain
+# below, once CC/CFLAGS have been worked out.
+TARGET_LIB32="${TARGET_LIB32_VERSION:-}"
 CLEAN_BUILD=false
 FORCE_BUILD=false
 BUILD_HOST_AIDL_TOOL=true
@@ -123,6 +125,22 @@ if [ -n "${TARGET_CXX_EXTRA}" ]; then
 fi
 TARGET_CFLAGS="${CFLAGS:-}"
 TARGET_CXXFLAGS="${CXXFLAGS:-}"
+
+# Declared target bitness, when the caller did not state one. This script always
+# passes -DTARGET_LIB32_VERSION, so CMake's own default never gets a chance —
+# derive the same answer here. Ask the configured compiler rather than the host:
+# with a cross toolchain in CC the two differ, and it is the target that matters.
+# Falls back to 32-bit, the historical default, if the probe says nothing.
+if [ -z "${TARGET_LIB32}" ]; then
+  # set -e / pipefail are active: a compiler that cannot run must fall through
+  # to the default, not abort the build.
+  _ptr="$(${TARGET_CC:-cc} ${TARGET_CFLAGS} -dM -E -x c /dev/null 2>/dev/null \
+          | sed -n 's/^#define __SIZEOF_POINTER__ //p' || true)"
+  case "${_ptr}" in
+    8) TARGET_LIB32=OFF ;;
+    *) TARGET_LIB32=ON  ;;
+  esac
+fi
 
 # Parse arguments
 for arg in "$@"; do

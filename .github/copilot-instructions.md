@@ -15,7 +15,7 @@ out/
 
 ### Developer/Architecture Team (Wrapper Scripts)
 
-- `build-linux-binder-aidl.sh`: Build target runtime (default: 64-bit, override with `TARGET_LIB32_VERSION=ON`)
+- `build-linux-binder-aidl.sh`: Build target runtime (bitness follows the toolchain; override with `TARGET_LIB32_VERSION`)
   - Also builds host AIDL by default; use `no-host-aidl` to skip if already available
   - Respects Yocto environment: `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`
   - Automatically passes these to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPILER`, `CMAKE_C_FLAGS`, etc.
@@ -61,7 +61,7 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Separate build trees:** `build-host/` for AIDL compiler, `build-target/` for runtime libs (never mix)
 - **Build environment detection:** CMake auto-detects Yocto via `OECORE_*` environment variables (lines 145–150)
 - **AidlGenerator macro:** CMakeLists.txt defines macro for generating stubs/proxies (line 242+); used by examples but not production
-- **Default architecture:** 32-bit. `TARGET_LIB32_VERSION` defaults to `ON` whenever it is undefined
+- **Default architecture:** follows the toolchain — `TARGET_LIB32_VERSION` is derived from the compiler's pointer size when undefined
   (`CMakeLists.txt:201-203`), independent of the host or target architecture. Build 64-bit by setting
   `TARGET_LIB64_VERSION=ON` or `TARGET_LIB32_VERSION=OFF`. Because `BINDER_IPC_32BIT` follows the compile
   bitness by default, an unqualified build produces protocol 7 — including a native x86_64 build
@@ -113,17 +113,17 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
   ./build-linux-binder-aidl.sh
   ```
 - **Direct CMake:** Pass compiler and flags explicitly (see Production/Yocto section above)
-- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — this is the default on every host
+- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — the default when the toolchain is 32-bit
 - `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — set it explicitly; the build
   does not read the host or target architecture (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
 - Never set both 32-bit and 64-bit flags simultaneously
 - **Bitness and wire protocol are independent axes:**
   - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture
   - `BINDER_IPC_32BIT` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
-  - `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT=ON` (protocol 7); a 64-bit build rejects `BINDER_IPC_32BIT=ON`
+  - `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT=ON` (protocol 7); a 64-bit toolchain rejects `BINDER_IPC_32BIT=ON`
 - **32-bit userspace on 64-bit kernel:** Common in embedded systems for memory efficiency
   - Build with `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` (protocol 8)
-  - The `OFF` is not optional here — the 32-bit default would otherwise give protocol 7 against a protocol-8 kernel
+  - The `OFF` is not optional here — a 32-bit toolchain would otherwise give protocol 7 against a protocol-8 kernel
 
 ## Testing & Validation
 

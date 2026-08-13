@@ -121,7 +121,7 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `CXXFLAGS` | C++ compiler flags | None |
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
-| `TARGET_LIB32_VERSION` | Build 32-bit target | `ON` |
+| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
 | `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` |
 
 ### Examples
@@ -207,7 +207,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
-| `TARGET_LIB32_VERSION` | Declare a 32-bit target | `ON` | Use for armhf, i686 |
+| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
 | `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
@@ -219,11 +219,11 @@ The following tables list CMake variables for **direct CMake invocation in produ
 - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` declare the **target ABI**, and follow your *userspace* architecture.
 - `BINDER_IPC_32BIT` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
 
-Because `TARGET_LIB32_VERSION` defaults to `ON`, an unqualified build produces **protocol 7**. Any protocol-8 target must pass `-DBINDER_IPC_32BIT=OFF` explicitly, including a native x86_64 build.
+When unset, `TARGET_LIB32_VERSION` follows the toolchain's pointer size, so an unqualified build matches the compiler it was given: a 32-bit cross-compile declares 32-bit and selects protocol 7, a 64-bit one declares 64-bit and selects protocol 8. State it explicitly whenever the wire protocol must differ from that.
 
 **32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is `TARGET_LIB32_VERSION=ON` with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path; `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and cannot be enabled there at all.
 
-Because `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON`, this configuration must pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
+A 32-bit toolchain declares `TARGET_LIB32_VERSION=ON`, which defaults `BINDER_IPC_32BIT` to `ON`, so this configuration must pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
 
 #### Installation Paths (All Optional)
 
@@ -461,9 +461,9 @@ Binder driver protocol(7) does not match user space protocol(8)!
 | Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 | All-64-bit userspace | 64-bit | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 
-`TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON` for backward
-compatibility, so the mixed configuration passes `-DBINDER_IPC_32BIT=OFF`
-explicitly. A 64-bit build rejects `BINDER_IPC_32BIT=ON` outright.
+`TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON`, so the mixed
+configuration passes `-DBINDER_IPC_32BIT=OFF` explicitly. A 64-bit build rejects
+`BINDER_IPC_32BIT=ON` outright.
 
 ### Supported kernel range
 

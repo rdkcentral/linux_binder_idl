@@ -196,10 +196,17 @@ if (BUILD_WITHOUT_LIBLOG)
     set(BUILD_WITH_LIBLOG OFF)
 endif ()
 
-# Set default binder library as 32 bit (ARM userspace target)
-# Use conditional set so -DTARGET_LIB32_VERSION=OFF can override for future 64-bit
+# Declared target bitness. Neither this nor TARGET_LIB64_VERSION adds -m32/-m64:
+# the ELF class comes from CC/CXX. What the declaration does decide is the
+# default wire protocol below, so it has to agree with the toolchain or the
+# guard further down rejects the build. Follow CMAKE_SIZEOF_VOID_P rather than
+# assuming 32-bit — an explicit -DTARGET_LIB32_VERSION still wins.
 if (NOT DEFINED TARGET_LIB32_VERSION)
-    set(TARGET_LIB32_VERSION ON)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(TARGET_LIB32_VERSION ON)
+    else ()
+        set(TARGET_LIB32_VERSION OFF)
+    endif ()
 endif()
 if (TARGET_LIB64_VERSION)
     message("Building 64bit binder library")
