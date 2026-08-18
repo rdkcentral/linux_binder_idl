@@ -68,7 +68,13 @@ fail() { echo "  FAIL  qemu binder test — $1"; exit 1; }   # once opted in, re
 # different binary and a different busybox than a 64-bit one.
 CXX="${CXX:-g++}"
 CC="${CC:-gcc}"
-for tool in cpio "${CXX}" timeout gzip ldd; do
+# A Yocto-style CC/CXX carries embedded flags ("arm-...-gcc --sysroot=..."), so
+# resolve the binary from the first word before asking whether it exists.
+CC_BIN="${CC%% *}"
+CXX_BIN="${CXX%% *}"
+# cmake/make included: this script builds the binder SDK itself, so their
+# absence is missing optional tooling to skip on, not a build failure to report.
+for tool in cpio "${CC_BIN}" "${CXX_BIN}" cmake make timeout gzip ldd; do
     command -v "${tool}" >/dev/null 2>&1 || skip "${tool} not installed"
 done
 BUSYBOX="$(command -v busybox || true)"
@@ -157,7 +163,7 @@ prepare_variant() {   # <arch> <protocol> <busybox>
     # can link a bare -m32 binary but has no i386 kernel headers — which is the
     # usual state after installing only gcc-multilib.
     if [ -n "${mflag}" ] && \
-       ! printf '#include <errno.h>\nint main(){return 0;}\n' | "${CXX}" ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
+       ! printf '#include <errno.h>\nint main(){return 0;}\n' | ${CXX} ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
         SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — see tests/install.sh (gcc-multilib/g++-multilib + linux-libc-dev:i386)"
         VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
     fi
@@ -193,7 +199,7 @@ prepare_variant() {   # <arch> <protocol> <busybox>
     [ -x "${sm_bin}" ] || fail "servicemanager not built for ${key} at ${sm_bin}"
 
     echo "  compiling binder_roundtrip (${arch}) ..."
-    "${CXX}" ${mflag} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+    ${CXX} ${mflag} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
         "${HERE}/binder_roundtrip.cpp" \
         -I"${sdk_inc}" -L"${sdk_lib}" -lbinder -lutils -lbase -lcutils -llog \
         -Wl,-rpath,/opt/binder/lib -o "${WORK}/binder_roundtrip-${key}" \

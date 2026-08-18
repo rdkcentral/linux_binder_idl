@@ -21,19 +21,22 @@
 # QEMU binder round-trip test (tests/qemu/).
 #
 # Three groups:
-#   RUN   — to run tests/qemu/run-qemu-test.sh: qemu, busybox, cpio, g++, gzip
+#   RUN   — to run tests/qemu/run-qemu-test.sh: qemu, busybox, cpio, gzip, and
+#           the compiler + cmake/make it builds the binder SDK with
 #           (timeout/ldd come with coreutils/libc and are normally present).
 #   BUILD — to build the kernel matrix with tests/qemu/build-kernels.sh
 #           (Buildroot): toolchain + wget/tar/rsync/bc/flex/bison/unzip/ncurses/
 #           openssl/elf headers, etc.
-#   32BIT — opt-in, --with-32bit: the multilib toolchain + i386 kernel headers
-#           that the protocol-7 (i386) guest userspace is compiled with. Without
-#           it the runner skips that variant and tests protocol 8 only.
+#   32BIT — opt-in, --with-32bit: the 32-bit libc/libstdc++ and i386 kernel
+#           headers that the protocol-7 (i386) guest userspace is compiled with.
+#           Without it the runner skips that variant and tests protocol 8 only.
 #
-# WARNING: on Debian/Ubuntu, gcc-multilib CONFLICTS with the ARM cross
-# compilers (gcc-arm-linux-gnueabihf) — apt removes one to install the other.
-# Since ARM cross-compilation is how real targets are built, --with-32bit is
-# opt-in and never part of a default install.
+# Note: on Debian/Ubuntu this deliberately installs the component packages
+# rather than the gcc-multilib metapackage. gcc-multilib CONFLICTS with the ARM
+# cross compilers (gcc-arm-linux-gnueabihf) — apt removes one to install the
+# other — while libc6-dev-i386/lib32stdc++/linux-libc-dev:i386 supply the same
+# -m32 capability and coexist with them. ARM cross-compilation is how real
+# targets are built, so a test prerequisite must not displace it.
 #
 # Usage:
 #   ./tests/install.sh                # install RUN + BUILD prerequisites
@@ -64,25 +67,25 @@ elif command -v pacman  >/dev/null 2>&1; then PM=pacman
 else echo "ERROR: no supported package manager (apt/dnf/pacman) found." >&2; exit 1; fi
 
 case "${PM}" in
-    # M32_PKGS is the opt-in 32-bit toolchain (see the WARNING above). The
-    # multilib compiler alone is not enough — the i386 *kernel* headers are a
-    # separate package, and without them a -m32 compile fails on asm/errno.h.
+    # M32_PKGS is the opt-in 32-bit toolchain (see the note above). The 32-bit
+    # libc alone is not enough — the i386 *kernel* headers are a separate
+    # package, and without them a -m32 compile fails on asm/errno.h.
     apt)
-        RUN_PKGS=(qemu-system-x86 busybox-static cpio g++ gzip)
+        RUN_PKGS=(qemu-system-x86 busybox-static cpio g++ gzip cmake make)
         BUILD_PKGS=(build-essential wget tar rsync bc flex bison
                     unzip file git python3 libncurses-dev libssl-dev libelf-dev)
-        M32_PKGS=(gcc-multilib g++-multilib linux-libc-dev:i386)
+        M32_PKGS=(libc6-dev-i386 lib32stdc++-13-dev linux-libc-dev:i386)
         INSTALL=(apt-get install -y)
         REFRESH=(apt-get update) ;;
     dnf)
-        RUN_PKGS=(qemu-system-x86 busybox cpio gcc-c++ gzip)
+        RUN_PKGS=(qemu-system-x86 busybox cpio gcc-c++ gzip cmake make)
         BUILD_PKGS=(make gcc gcc-c++ wget tar rsync bc
                     flex bison unzip file git python3 ncurses-devel openssl-devel elfutils-libelf-devel)
         M32_PKGS=(glibc-devel.i686 libstdc++-devel.i686)
         INSTALL=(dnf install -y)
         REFRESH=(true) ;;
     pacman)
-        RUN_PKGS=(qemu-system-x86 busybox cpio gcc gzip)
+        RUN_PKGS=(qemu-system-x86 busybox cpio gcc gzip cmake make)
         BUILD_PKGS=(base-devel wget tar rsync bc flex bison unzip file git python ncurses openssl)
         M32_PKGS=(lib32-gcc-libs)
         INSTALL=(pacman -S --needed --noconfirm)
@@ -99,9 +102,8 @@ echo "Packages:        ${PKGS[*]}"
 
 if ${WITH_32BIT} && [ "${PM}" = apt ]; then
     echo ""
-    echo "WARNING: gcc-multilib conflicts with the ARM cross compilers on Debian/Ubuntu."
-    echo "         apt will REMOVE gcc-arm-linux-gnueabihf (and friends) to install it."
-    echo "         Without --with-32bit the runner simply skips the protocol-7 variant."
+    echo "Note: installing the 32-bit component packages, not gcc-multilib —"
+    echo "      the metapackage would displace gcc-arm-linux-gnueabihf."
 fi
 
 if [ "${DRY_RUN}" = true ]; then
