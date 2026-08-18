@@ -162,14 +162,48 @@ export TARGET_LIB32_VERSION=ON
 **BitBake Recipe Example:**
 
 ```bitbake
-inherit cmake
+inherit cmake siteinfo
 
 # Production recipe - build binder runtime libraries only
 DEPENDS = ""
 
+# The wire protocol belongs to the kernel, so the recipe needs the configured
+# kernel in scope to read it.
+do_configure[depends] += "virtual/kernel:do_shared_workdir"
+
+# Machine/distro override, for a build with no kernel in scope (an SDK, say).
+# Left empty the protocol is derived, which is what a device build should do.
+BINDER_PROTOCOL ?= ""
+
+def binder_ipc32(d):
+    import os
+    want = d.getVar('BINDER_PROTOCOL') or ''
+    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
+    derived = ''
+    if os.path.exists(cfg):
+        derived = '8'
+        with open(cfg) as f:
+            for line in f:
+                if line.strip() == 'CONFIG_ANDROID_BINDER_IPC_32BIT=y':
+                    derived = '7'
+                    break
+    if derived and want and derived != want:
+        bb.fatal("binder: the kernel serves protocol %s but BINDER_PROTOCOL is "
+                 "%s. A mismatch terminates every binder process at startup."
+                 % (derived, want))
+    proto = derived or want
+    if not proto:
+        bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
+                 "unset, so the wire protocol cannot be determined.")
+    return 'ON' if proto == '7' else 'OFF'
+
+# Bitness follows the target ABI; the protocol follows the kernel. In a multilib
+# build SITEINFO_BITS reports 32 for the lib32- variant and 64 for the base
+# recipe, so both roles build from this one expression while sharing a protocol.
 EXTRA_OECMAKE = " \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_LIB64_VERSION=${@bb.utils.contains('TUNE_FEATURES', 'aarch64', 'ON', 'OFF', d)} \
+    -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
+    ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
 
 do_install() {
@@ -182,6 +216,11 @@ FILES_${PN}-dev += "${includedir}/*"
 
 **Key Points:**
 
+- **The protocol is derived, not declared**: reading the kernel's resolved `.config` cannot drift from
+  the kernel the way a hand-maintained board flag can. `BINDER_PROTOCOL` exists for builds with no
+  kernel in scope, and the build fails if the two disagree
+- **`SITEINFO_BITS`, not `TUNE_FEATURES`**: it is the target's word size directly, so it covers every
+  64-bit architecture rather than matching on one of them, and it is multilib-aware
 - **Production builds**: Only build target runtime libraries (`BUILD_HOST_AIDL=OFF`, SDK built by default)
 - **No AIDL compiler needed**: Architecture team generates C++ code offline using AIDL compiler
 - **Pre-generated code committed**: All AIDL-generated C++ files are in source control
