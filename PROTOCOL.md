@@ -49,10 +49,10 @@ typedef __u64 binder_uintptr_t;
 Correct headers are necessary but not sufficient: the right headers with the wrong define still
 produce a library that cannot talk to the driver.
 
-The same applies to the public C++ headers this project installs. `binder/Parcel.h` switches
-`binder_size_t` and the `mObjects` layout on `BINDER_IPC_32BIT`, so a consumer that compiles
-without the define sees a different `Parcel` than libbinder exports. Targets that link the
-`binder` CMake target inherit it; anything built outside this project's CMake must define it.
+The same define also selects the `binder_size_t` typedef in the installed `binder/Parcel.h`, so a
+consumer that calls the low-level API taking that type has to agree with libbinder about it.
+Targets linking the `binder` CMake target inherit the define; anything built outside this
+project's CMake and using that API must set it itself.
 
 ## Which kernel serves which protocol
 
@@ -121,10 +121,17 @@ returns the same answer for both builds; `SITEINFO_BITS` differs between them an
 class. In OE the two roles are the base recipe and its `lib32-` multilib variant, so one expression
 covers both.
 
-Anything that compiles against the binder headers is part of this. `binder/Parcel.h` switches
-`binder_size_t` and the `mObjects` layout on `BINDER_IPC_32BIT`, so a HAL interface library, a
-middleware component and libbinder itself must all be built with the same value. Mixing them
-inside one role links cleanly and then misreads every transaction buffer.
+The define reaches further than libbinder, but not as far as it first appears. `binder/Parcel.h`
+switches the `binder_size_t` typedef on it, so any code calling the low-level API that takes or
+returns that type — `ipcSetDataReference`, `ipcObjects` — must be built with the same value as
+libbinder. Because the type is part of those signatures, a mismatch changes the mangled name and
+shows up as an unresolved symbol at link time rather than as corruption at runtime.
+
+Code that only uses the ordinary `Parcel` surface is unaffected. `Parcel`'s member layout does not
+change with the define — `mObjects` is a pointer, so its size is fixed by the ABI, not by what it
+points at — and the read/write methods that generated AIDL bindings call take no `binder_size_t`.
+A HAL interface library therefore does not need the define; libbinder does, because it is what
+speaks to the driver.
 
 ## The switches to build with
 

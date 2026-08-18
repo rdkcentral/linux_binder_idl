@@ -517,12 +517,19 @@ Both defaults come from the toolchain's pointer size, not from each other: a
 passes `-DBINDER_IPC_32BIT=OFF` explicitly. A 64-bit toolchain rejects
 `BINDER_IPC_32BIT=ON` outright.
 
-**Consumers built outside this project's CMake must define `BINDER_IPC_32BIT`
-themselves when linking a protocol-7 libbinder.** The installed public header
-`binder/Parcel.h` switches `binder_size_t` and the `mObjects` layout on it, so
-compiling against the headers without the define yields a different `Parcel`
-than libbinder exports — a silent ABI mismatch rather than a link error.
-Targets that link the `binder` CMake target inherit it automatically.
+**Code calling the low-level `Parcel` API must agree with libbinder about
+`BINDER_IPC_32BIT`.** The installed `binder/Parcel.h` selects the
+`binder_size_t` typedef from it, and that type appears in the signatures of
+`ipcSetDataReference` and `ipcObjects`, so a consumer built with the other value
+gets a different mangled name and fails to link. Targets linking the `binder`
+CMake target inherit the define; anything built outside this project's CMake and
+using that API must set it itself.
+
+Ordinary `Parcel` use needs nothing. The member layout does not depend on the
+define — `mObjects` is a pointer, sized by the ABI rather than by its pointee —
+and the read/write methods that generated AIDL bindings call take no
+`binder_size_t`, so an interface library compiled against these headers is
+unaffected by the protocol the library was built at.
 
 ### Supported kernel range
 
