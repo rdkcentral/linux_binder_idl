@@ -61,10 +61,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Separate build trees:** `build-host/` for AIDL compiler, `build-target/` for runtime libs (never mix)
 - **Build environment detection:** CMake auto-detects Yocto via `OECORE_*` environment variables (lines 145–150)
 - **AidlGenerator macro:** CMakeLists.txt defines macro for generating stubs/proxies (line 242+); used by examples but not production
-- **Default architecture:** follows the toolchain — `TARGET_LIB32_VERSION` is derived from the compiler's pointer size when undefined
-  (`CMakeLists.txt:201-203`), independent of the host or target architecture. Build 64-bit by setting
-  `TARGET_LIB64_VERSION=ON` or `TARGET_LIB32_VERSION=OFF`. Because `BINDER_IPC_32BIT` follows the compile
-  bitness by default, an unqualified build produces protocol 7 — including a native x86_64 build
+- **Default architecture:** follows the toolchain — both `TARGET_LIB32_VERSION` and `BINDER_IPC_32BIT` are
+  derived from the compiler's pointer size when undefined, so an unqualified build matches the compiler it
+  was given: 32-bit → protocol 7, 64-bit → protocol 8. An explicit `-D` value always wins
 
 ### Source Code Management
 
@@ -120,10 +119,10 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Bitness and wire protocol are independent axes:**
   - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture
   - `BINDER_IPC_32BIT` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
-  - `TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT=ON` (protocol 7); a 64-bit toolchain rejects `BINDER_IPC_32BIT=ON`
+  - Both default from the toolchain's pointer size, not from each other; protocol 7 requires a 32-bit toolchain, and `-DBINDER_IPC_32BIT=ON` against a 64-bit compiler is rejected at configure time
 - **32-bit userspace on 64-bit kernel:** Common in embedded systems for memory efficiency
   - Build with `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` (protocol 8)
-  - The `OFF` is not optional here — a 32-bit toolchain would otherwise give protocol 7 against a protocol-8 kernel
+  - The `OFF` is not optional here — a 32-bit toolchain defaults to protocol 7, which a protocol-8 kernel refuses
 
 ## Testing & Validation
 

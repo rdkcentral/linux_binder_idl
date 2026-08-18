@@ -208,7 +208,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` | Must match the target kernel |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 
@@ -219,11 +219,22 @@ The following tables list CMake variables for **direct CMake invocation in produ
 - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` declare the **target ABI**, and follow your *userspace* architecture.
 - `BINDER_IPC_32BIT` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
 
-When unset, `TARGET_LIB32_VERSION` follows the toolchain's pointer size, so an unqualified build matches the compiler it was given: a 32-bit cross-compile declares 32-bit and selects protocol 7, a 64-bit one declares 64-bit and selects protocol 8. State it explicitly whenever the wire protocol must differ from that.
+Both defaults are read from the compiler's pointer size, so an unqualified build matches the toolchain it was given: a 32-bit cross-compile selects protocol 7, a 64-bit one selects protocol 8. State `BINDER_IPC_32BIT` explicitly whenever the wire protocol must differ from that.
 
-**32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is `TARGET_LIB32_VERSION=ON` with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path; `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and cannot be enabled there at all.
+**Protocol 7 requires a 32-bit toolchain.** It carries 32-bit binder handles, so a 64-bit pointer model cannot be represented in them — and no 64-bit kernel serves protocol 7 in any case (`CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream). The two valid pairings are therefore:
 
-A 32-bit toolchain declares `TARGET_LIB32_VERSION=ON`, which defaults `BINDER_IPC_32BIT` to `ON`, so this configuration must pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
+| Toolchain | `BINDER_IPC_32BIT` | Protocol |
+| --- | --- | --- |
+| 32-bit | `ON` (default) or `OFF` | 7 or 8 |
+| 64-bit | `OFF` (default) | 8 |
+
+`-DBINDER_IPC_32BIT=ON` against a 64-bit compiler has no valid meaning, and CMake refuses to configure it:
+
+```
+BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
+```
+
+**32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is the 32-bit toolchain with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path. This is the one case the default gets wrong for you: a 32-bit toolchain defaults to protocol 7, so pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
 
 #### Installation Paths (All Optional)
 

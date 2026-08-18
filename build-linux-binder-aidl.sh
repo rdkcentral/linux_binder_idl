@@ -126,17 +126,20 @@ fi
 TARGET_CFLAGS="${CFLAGS:-}"
 TARGET_CXXFLAGS="${CXXFLAGS:-}"
 
+# Pointer size of the TARGET toolchain. Ask the configured compiler rather than
+# the host: with a cross toolchain in CC the two differ, and it is the target
+# that matters. Empty when the compiler cannot be probed, which falls the
+# defaults below back to 32-bit — the historical behaviour.
+# set -e / pipefail are active, so a compiler that cannot run must fall through
+# rather than abort the build.
+TARGET_PTR_SIZE="$(${TARGET_CC:-cc} ${TARGET_CFLAGS} -dM -E -x c /dev/null 2>/dev/null \
+                   | sed -n 's/^#define __SIZEOF_POINTER__ //p' || true)"
+
 # Declared target bitness, when the caller did not state one. This script always
 # passes -DTARGET_LIB32_VERSION, so CMake's own default never gets a chance —
-# derive the same answer here. Ask the configured compiler rather than the host:
-# with a cross toolchain in CC the two differ, and it is the target that matters.
-# Falls back to 32-bit, the historical default, if the probe says nothing.
+# derive the same answer here.
 if [ -z "${TARGET_LIB32}" ]; then
-  # set -e / pipefail are active: a compiler that cannot run must fall through
-  # to the default, not abort the build.
-  _ptr="$(${TARGET_CC:-cc} ${TARGET_CFLAGS} -dM -E -x c /dev/null 2>/dev/null \
-          | sed -n 's/^#define __SIZEOF_POINTER__ //p' || true)"
-  case "${_ptr}" in
+  case "${TARGET_PTR_SIZE}" in
     8) TARGET_LIB32=OFF ;;
     *) TARGET_LIB32=ON  ;;
   esac
@@ -241,9 +244,17 @@ CMAKE_ARGS=(
 # Binder wire protocol, decoupled from compile bitness (#42). Always pass an
 # explicit BOOL so a value cached from an earlier run in the reused build-target
 # dir can't silently stick (e.g. a prior BINDER_IPC_32BIT=OFF run leaving the
-# cache at protocol 8). When the env var is unset, default it to follow the
-# compile bitness (32-bit -> protocol 7), matching CMakeLists.txt's default.
-BINDER_IPC_32BIT_ARG="${BINDER_IPC_32BIT:-${TARGET_LIB32}}"
+# cache at protocol 8). When the env var is unset, follow the TOOLCHAIN rather
+# than TARGET_LIB32_VERSION, matching CMakeLists.txt: protocol 7 cannot carry
+# 64-bit pointers, so deriving it from a declaration that the compiler
+# contradicts only ever selects a protocol the caller did not ask for.
+if [ -n "${BINDER_IPC_32BIT:-}" ]; then
+  BINDER_IPC_32BIT_ARG="${BINDER_IPC_32BIT}"
+elif [ "${TARGET_PTR_SIZE}" = "8" ]; then
+  BINDER_IPC_32BIT_ARG=OFF
+else
+  BINDER_IPC_32BIT_ARG=ON
+fi
 CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL="${BINDER_IPC_32BIT_ARG}")
 
 # When OE SDK cmake is used, the OEToolchainConfig.cmake handles compiler,

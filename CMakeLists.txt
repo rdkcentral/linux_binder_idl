@@ -219,11 +219,14 @@ endif ()
 #     all-32-bit userspace on a CONFIG_ANDROID_BINDER_IPC_32BIT kernel.
 #   - protocol 8 (unset, 64-bit handles) — required for a MIXED platform (32-bit
 #     MW + 64-bit vendor sharing one kernel); a 32-bit process CAN run protocol 8.
-# Default: follow the compile bitness (32-bit -> protocol 7) for backward
-# compatibility. Override with -DBINDER_IPC_32BIT=OFF to build a 32-bit
-# protocol-8 library (the mixed config), or =ON to force protocol 7.
+# Default: follow the TOOLCHAIN, not TARGET_LIB32_VERSION. The declaration adds
+# no -m32 and can disagree with the compiler it is given; deriving protocol 7
+# from it meant `-DTARGET_LIB32_VERSION=ON` with a 64-bit compiler selected a
+# protocol nobody asked for and the guard below then rejected the build. The
+# toolchain cannot disagree with itself. Override with -DBINDER_IPC_32BIT=OFF to
+# build a 32-bit protocol-8 library (the mixed config); an explicit value wins.
 if (NOT DEFINED BINDER_IPC_32BIT)
-    if (TARGET_LIB32_VERSION)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
         set(BINDER_IPC_32BIT ON)
     else ()
         set(BINDER_IPC_32BIT OFF)
