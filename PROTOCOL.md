@@ -73,6 +73,23 @@ build the resolved config is reachable at `${STAGING_KERNEL_BUILDDIR}/.config` v
 `zcat /proc/config.gz | grep BINDER` answers it. Where no kernel config is in scope, state the
 switches explicitly rather than letting the build guess.
 
+## Two builds per platform
+
+The binder library is built once per role, and the two roles differ only in bitness:
+
+- **Middleware** — 32-bit, at whatever protocol the kernel serves.
+- **Vendor** — 64-bit at protocol 8 where the platform supports 64-bit; 32-bit at the kernel's
+  protocol where it does not.
+
+**The protocol is a property of the platform; the bitness is a property of the role.** There is one
+kernel, so it serves one protocol, and both builds must speak it. The two roles never disagree
+about the protocol — only about the ELF class.
+
+Two facts make the combinations closed rather than a matrix to be memorised. A 64-bit kernel
+cannot serve protocol 7, so a 64-bit vendor build is always protocol 8. And a 32-bit kernel cannot
+run 64-bit userspace, so a platform without 64-bit support has both roles at 32-bit and identical
+switches — on those platforms the two builds are the same build.
+
 ## Platform combinations
 
 Middleware is 32-bit. The kernel is 32-bit on some platforms and 64-bit on others, so the
@@ -98,7 +115,16 @@ so the legacy row has no mixed variant.
 
 **On a 64-bit kernel two binder libraries ship.** A 32-bit one for the middleware and a 64-bit one
 for the vendor, different ELF classes, **both protocol 8**, because both talk to the same kernel.
-The protocol is a property of the platform; the bitness is a property of the process.
+
+This is why the derivation needs no per-role override. `binder_ipc32()` reads the one kernel and
+returns the same answer for both builds; `SITEINFO_BITS` differs between them and selects the ELF
+class. In OE the two roles are the base recipe and its `lib32-` multilib variant, so one expression
+covers both.
+
+Anything that compiles against the binder headers is part of this. `binder/Parcel.h` switches
+`binder_size_t` and the `mObjects` layout on `BINDER_IPC_32BIT`, so a HAL interface library, a
+middleware component and libbinder itself must all be built with the same value. Mixing them
+inside one role links cleanly and then misreads every transaction buffer.
 
 ## The switches to build with
 
