@@ -457,8 +457,9 @@ Read the kernel, then set the build flag to match it:
 | 64-bit, any version | unselectable (`depends on !64BIT`) | `-DBINDER_IPC_32BIT=OFF` | 8 |
 | any, ≥ 4.18 | option removed | `-DBINDER_IPC_32BIT=OFF` | 8 |
 
-Read it off a device with `zcat /proc/config.gz | grep BINDER`. A mismatch is
-fatal when libbinder opens the driver, and there is no fallback:
+Read it off a device with the commands under
+[Critical: read `CONFIG_ANDROID_BINDER_IPC_32BIT` off the device](#critical-read-config_android_binder_ipc_32bit-off-the-device).
+A mismatch is fatal when libbinder opens the driver, and there is no fallback:
 
 ```
 Binder driver protocol(7) does not match user space protocol(8)!
@@ -521,8 +522,12 @@ CONFIG_ANDROID_BINDERFS=y               # Required for Ubuntu/desktop Linux
 This option sets the kernel's binder wire protocol, and the libbinder you install must be built to match — protocol 7 when it is `=y`, protocol 8 otherwise. It is a property of the kernel you were given, not something you choose per userspace layer:
 
 ```bash
-zcat /proc/config.gz | grep BINDER
+zcat /proc/config.gz | grep BINDER          # needs CONFIG_IKCONFIG_PROC=y
+grep BINDER /boot/config-"$(uname -r)"      # distro kernels
+grep BINDER .config                         # the kernel build tree
 ```
+
+`/proc/config.gz` exists only when the kernel was built with `CONFIG_IKCONFIG_PROC=y`, which many embedded kernels omit — fall through to the other two, or ask whoever supplies the kernel. On a running device, `getconf LONG_BIT` inside a shell reports userspace bitness, not the kernel's, so it does not answer this question.
 
 - `=y` → the kernel serves protocol **7**. Build libbinder with `-DBINDER_IPC_32BIT=ON`.
 - unset or absent → the kernel serves protocol **8**. Build libbinder with `-DBINDER_IPC_32BIT=OFF`.

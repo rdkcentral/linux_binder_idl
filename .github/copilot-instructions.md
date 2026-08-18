@@ -130,7 +130,7 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Comprehensive test:** `./test_build.sh` (~10-20 min) - full validation suite with zero-warnings check
 - **Example IPC test:** `./build-binder-example.sh` - builds FWManager service/client, tests binder IPC
 - **Clean builds:** Add `clean` to any build script (e.g., `./build-linux-binder-aidl.sh clean`)
-- **Runtime testing:** Requires Linux 5.16+ with binder; see BUILD.md §"Testing" for Vagrant/KVM setup
+- **Runtime testing:** the *supported target* floor is 4.9 (see "Kernel & Runtime Requirements"). The 5.16+ figure is a property of the desktop **host** used for Vagrant/KVM runs, where binderfs makes provisioning `/dev/binder` straightforward — it is not a requirement on the device. See BUILD.md §"Testing"
 
 ## Common Pitfalls
 
