@@ -122,7 +122,7 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | Follows `TARGET_LIB32_VERSION` |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
 
 ### Examples
 
@@ -469,13 +469,21 @@ Binder driver protocol(7) does not match user space protocol(8)!
 
 | Platform | MW | Vendor | Protocol | Build | Kernel |
 | --- | --- | --- | --- | --- | --- |
-| All-32-bit userspace | 32-bit | 32-bit | 7 | `-DTARGET_LIB32_VERSION=ON` (defaults `BINDER_IPC_32BIT=ON`) | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
+| All-32-bit userspace | 32-bit | 32-bit | 7 | no flags needed — a 32-bit toolchain defaults `BINDER_IPC_32BIT=ON` | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
 | Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 | All-64-bit userspace | 64-bit | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 
-`TARGET_LIB32_VERSION=ON` defaults `BINDER_IPC_32BIT` to `ON`, so the mixed
-configuration passes `-DBINDER_IPC_32BIT=OFF` explicitly. A 64-bit build rejects
+Both defaults come from the toolchain's pointer size, not from each other: a
+32-bit compiler defaults `BINDER_IPC_32BIT` to `ON`, so the mixed configuration
+passes `-DBINDER_IPC_32BIT=OFF` explicitly. A 64-bit toolchain rejects
 `BINDER_IPC_32BIT=ON` outright.
+
+**Consumers built outside this project's CMake must define `BINDER_IPC_32BIT`
+themselves when linking a protocol-7 libbinder.** The installed public header
+`binder/Parcel.h` switches `binder_size_t` and the `mObjects` layout on it, so
+compiling against the headers without the define yields a different `Parcel`
+than libbinder exports — a silent ABI mismatch rather than a link error.
+Targets that link the `binder` CMake target inherit it automatically.
 
 ### Supported kernel range
 

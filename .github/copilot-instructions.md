@@ -113,8 +113,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
   ```
 - **Direct CMake:** Pass compiler and flags explicitly (see Production/Yocto section above)
 - `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — the default when the toolchain is 32-bit
-- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — set it explicitly; the build
-  does not read the host or target architecture (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
+- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — the default when the toolchain
+  is 64-bit; the declaration adds no `-m64`, so it must agree with `CC`/`CXX`
+  (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
 - Never set both 32-bit and 64-bit flags simultaneously
 - **Bitness and wire protocol are independent axes:**
   - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture

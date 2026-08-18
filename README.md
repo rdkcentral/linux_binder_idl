@@ -216,8 +216,9 @@ Development wrapper scripts (`build-*.sh`) automatically handle CMake variables.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `ON` |
-| `TARGET_LIB64_VERSION` | Build 64-bit libraries | Auto-detect |
-| `TARGET_LIB32_VERSION` | Build 32-bit libraries | `OFF` |
+| `TARGET_LIB64_VERSION` | Declare a 64-bit target | follows the toolchain |
+| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
 
 **See [BUILD.md](BUILD.md) for:**
 
