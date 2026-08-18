@@ -8,7 +8,7 @@ The binder wire protocol is fixed at compile time on **both** sides. The kernel'
 `CONFIG_ANDROID_BINDER_IPC_32BIT`; the library's by `BINDER_IPC_32BIT`. libbinder compares them
 for exact equality when it opens the driver, and there is no fallback — the process terminates:
 
-```
+```text
 Binder driver '/dev/binder' could not be opened.
 Terminating: Binder driver protocol(7) does not match user space protocol(8)!
 ```
@@ -73,13 +73,40 @@ build the resolved config is reachable at `${STAGING_KERNEL_BUILDDIR}/.config` v
 `zcat /proc/config.gz | grep BINDER` answers it. Where no kernel config is in scope, state the
 switches explicitly rather than letting the build guess.
 
+## Platform combinations
+
+Middleware is 32-bit. The kernel is 32-bit on some platforms and 64-bit on others, so the
+protocol is decided per platform while the middleware's bitness stays fixed.
+
+| Platform | Kernel | MW | Vendor | Protocol | MW build | Vendor build |
+| --- | --- | --- | --- | --- | --- | --- |
+| Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `LIB32=ON` `IPC32=ON` | same as MW |
+| 32-bit kernel, option absent | 32-bit, ≥ 4.18 | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
+| 64-bit kernel, 32-bit MW | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
+| All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `LIB64=ON` `IPC32=OFF` | same as MW |
+
+Three consequences worth stating plainly:
+
+**A 32-bit middleware does not imply protocol 7.** Protocol 7 exists only on a 32-bit kernel at
+4.17 or older with the option set. On every other platform — including every 64-bit kernel — a
+32-bit middleware runs **protocol 8** over the kernel's compat path. Since a 32-bit toolchain
+defaults to protocol 7, `-DBINDER_IPC_32BIT=OFF` is the switch the middleware needs on most
+platforms, and it is never a default.
+
+**A protocol-7 platform is all-32-bit by necessity.** A 32-bit kernel cannot run 64-bit userspace,
+so the legacy row has no mixed variant.
+
+**On a 64-bit kernel two binder libraries ship.** A 32-bit one for the middleware and a 64-bit one
+for the vendor, different ELF classes, **both protocol 8**, because both talk to the same kernel.
+The protocol is a property of the platform; the bitness is a property of the process.
+
 ## The switches to build with
 
-| Configuration | Toolchain | Protocol | Switches |
-| --- | --- | --- | --- |
-| **A** — Legacy all-32-bit<br>32-bit kernel ≤ 4.17 with the option set | 32-bit | 7 | `-DTARGET_LIB32_VERSION=ON`<br>`-DBINDER_IPC_32BIT=ON` |
-| **B** — Mixed, 32-bit MW<br>32-bit userspace on a protocol-8 kernel | 32-bit | 8 | `-DTARGET_LIB32_VERSION=ON`<br>`-DBINDER_IPC_32BIT=OFF` |
-| **C** — All-64-bit<br>any protocol-8 kernel | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON`<br>`-DBINDER_IPC_32BIT=OFF` |
+| Configuration | Target | Toolchain | Protocol | Switches |
+| --- | --- | --- | --- | --- |
+| **A** — Legacy all-32-bit | 32-bit kernel ≤ 4.17 with the option set | 32-bit | 7 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
+| **B** — Mixed, 32-bit MW | 32-bit userspace on a protocol-8 kernel | 32-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **C** — All-64-bit | any protocol-8 kernel | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
 
 Row **B** is the one to watch: a 32-bit toolchain resolves to protocol 7 on its own, so
 `-DBINDER_IPC_32BIT=OFF` is mandatory there and is never a default. Bitness follows userspace;
@@ -94,6 +121,57 @@ middleware build and another for a 64-bit vendor build.
 ```sh
 TARGET_LIB32_VERSION=ON BINDER_IPC_32BIT=OFF ./build-linux-binder-aidl.sh
 ```
+
+## Deriving the switches in a Yocto build
+
+Both switches are derivable, from different sources: the protocol from the kernel's resolved
+config, the bitness from the target ABI the recipe is being built for. Nothing needs to be
+hand-maintained per platform.
+
+```bitbake
+inherit cmake siteinfo
+
+# The protocol comes from the kernel, so the recipe needs the configured kernel
+# in scope. Without this the .config below is not staged yet.
+do_configure[depends] += "virtual/kernel:do_shared_workdir"
+
+def binder_ipc32(d):
+    import os
+    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
+    if not os.path.exists(cfg):
+        bb.fatal("linux-binder: no kernel .config at %s, so the binder wire "
+                 "protocol cannot be determined. Set BINDER_IPC_32BIT explicitly "
+                 "for this build." % cfg)
+    with open(cfg) as f:
+        for line in f:
+            if line.strip() == 'CONFIG_ANDROID_BINDER_IPC_32BIT=y':
+                return 'ON'          # protocol 7
+    # Both "# CONFIG_... is not set" and outright absence mean protocol 8.
+    return 'OFF'
+
+# SITEINFO_BITS is the word size of the target this recipe is being built for,
+# which is what decides the ELF class. In a multilib build the lib32- variant
+# reports 32 and the base recipe reports 64, so each gets the right answer from
+# the same expression.
+EXTRA_OECMAKE += "\
+    -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
+    ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
+"
+```
+
+Read the resolved `.config`, never the `defconfig` — see above for why. Fail the build when no
+kernel is in scope rather than defaulting: a guessed protocol builds and links, then terminates
+the process on the device.
+
+On a 64-bit platform with 32-bit middleware this recipe is built twice — once as
+`linux-binder` and once as `lib32-linux-binder`. `binder_ipc32()` returns `OFF` for both, because
+there is one kernel and it serves one protocol, while `SITEINFO_BITS` differs between the two and
+selects the matching ELF class. That is the mixed configuration, expressed without a per-platform
+override.
+
+The library's own guards catch a contradiction that slips through: a declared bitness that
+disagrees with the compiler, or protocol 7 against a 64-bit toolchain, is refused at configure
+time rather than becoming a runtime failure.
 
 ## Combinations refused at configure time
 
