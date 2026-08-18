@@ -141,8 +141,16 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 
 # Build the userspace for one variant. Sets VARIANT_INITRAMFS on success, or
 # VARIANT_SKIP with a reason when the host can't produce it.
-prepare_variant() {   # <arch> <protocol> <busybox>
-    local arch="$1" proto="$2" bb="$3" key="$1-p$2"
+#
+# With <derive> non-empty the build is invoked WITHOUT TARGET_LIB32_VERSION or
+# BINDER_IPC_32BIT, so it has to work both out from the toolchain — the path a
+# plain `./build-linux-binder-aidl.sh` takes. That derivation is what selects
+# the protocol for every integrator who does not pass the flags, so it is what
+# shipped the protocol-7-on-64-bit default (#54); the explicit variants below
+# supply both values and therefore cannot exercise it.
+prepare_variant() {   # <arch> <protocol> <busybox> [derive]
+    local arch="$1" proto="$2" bb="$3" derive="${4:-}"
+    local key="$1-p$2${derive:+-derived}"
     VARIANT_INITRAMFS=""; VARIANT_SKIP=""
     if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
@@ -179,14 +187,34 @@ prepare_variant() {   # <arch> <protocol> <busybox>
     fi
 
     local sdk_out="${WORK}/sdk-${key}" sdk_build="${WORK}/build-${key}"
-    echo "  building ${arch} protocol-${proto} binder SDK ..."
+    # Derived runs pass neither flag; the toolchain in CC/CXX is the only input.
+    local -a proto_env=(TARGET_LIB32_VERSION="${lib32}" BINDER_IPC_32BIT="${ipc32}")
+    [ -n "${derive}" ] && proto_env=()
+    echo "  building ${arch} protocol-${proto} binder SDK${derive:+ (derived from the toolchain)} ..."
     if ! (cd "${REPO_ROOT}" && \
-          BUILD_DIR="${sdk_build}" OUT_DIR="${sdk_out}" \
+          env BUILD_DIR="${sdk_build}" OUT_DIR="${sdk_out}" \
           CC="${CC}${mflag:+ ${mflag}}" CXX="${CXX}${mflag:+ ${mflag}}" \
-          TARGET_LIB32_VERSION="${lib32}" BINDER_IPC_32BIT="${ipc32}" \
+          "${proto_env[@]}" \
           ./build-linux-binder-aidl.sh no-host-aidl) >"${WORK}/sdk-${key}.log" 2>&1; then
         [ "${KEEP}" = true ] || tail -15 "${WORK}/sdk-${key}.log" | sed 's/^/        /'
         fail "binder SDK build failed for ${arch}/protocol-${proto} (log: ${WORK}/sdk-${key}.log, kept with --keep)"
+    fi
+
+    # Assert the derivation picked the protocol this kernel serves, before the
+    # boot does it the slow way. A wrong answer here is the field failure
+    # (`protocol(7) does not match user space protocol(8)`) waiting to happen,
+    # and naming it at configure level makes the cause obvious in CI output.
+    if [ -n "${derive}" ]; then
+        # Read the build's own statement of what it selected. The CMake cache is
+        # not usable for this: BINDER_IPC_32BIT is a plain set(), so it lands in
+        # the cache only when passed with -D — exactly what a derived run does
+        # not do.
+        local got_proto
+        got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
+        if [ "${got_proto}" != "${proto}" ]; then
+            fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
+        fi
+        echo "    derived protocol ${got_proto} matches the kernel"
     fi
 
     local sdk_lib="${sdk_out}/lib" sdk_inc="" sm_bin="${sdk_out}/bin/servicemanager"
@@ -241,29 +269,36 @@ for kimg in "${KERNELS_LIST[@]}"; do
     if ! command -v "${qemu_bin}" >/dev/null 2>&1; then
         echo "  SKIP  ${label}: ${qemu_bin} not installed"; SKIPPED=$((SKIPPED+1)); continue
     fi
-    if ! prepare_variant "${arch}" "${proto}" "${bb}"; then
-        echo "  SKIP  ${label}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
-    fi
+    # Two passes per kernel: the explicit one pins both flags and proves the
+    # protocols interoperate; the derived one passes neither and proves the
+    # build picks the right protocol on its own — the path every integrator
+    # who does not set the flags takes.
+    for mode in "" derive; do
+        vlabel="${label}${mode:+ [derived]}"
+        if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+        fi
 
-    log="${WORK}/qemu-${label}.log"
-    echo "[qemu] booting kernel: ${label} (${arch}, protocol ${proto})"
-    timeout "${TIMEOUT}" "${qemu_bin}" \
-        -m 512 -no-reboot -nographic \
-        -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
-        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
-        >"${log}" 2>&1 || true
+        log="${WORK}/qemu-${label}${mode:+-derived}.log"
+        echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
+        timeout "${TIMEOUT}" "${qemu_bin}" \
+            -m 512 -no-reboot -nographic \
+            -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
+            -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
+            >"${log}" 2>&1 || true
 
-    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
-        echo "  PASS  ${label}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
-        PASS=$((PASS+1))
-    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
-        echo "  FAIL  ${label}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
-        FAIL=$((FAIL+1))
-    else
-        echo "  FAIL  ${label}: no result sentinel (boot/timeout?) — see ${log}"
-        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-        FAIL=$((FAIL+1))
-    fi
+        if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+            echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
+            PASS=$((PASS+1))
+        elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
+            echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
+            FAIL=$((FAIL+1))
+        else
+            echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
+            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+            FAIL=$((FAIL+1))
+        fi
+    done
 done
 
 echo ""
