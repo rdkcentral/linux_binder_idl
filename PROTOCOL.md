@@ -194,13 +194,25 @@ protocol from the toolchain on its own.
 | --- | --- | --- | --- | --- |
 | 4.9.337-ipc32 | i386 | 7 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 4.9.337-ipc32 | i386 | 7 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 
-The negative cases are the point of the harness: a protocol-8 userspace against the protocol-7
-kernel fails, reproducing the field error verbatim in the guest console, and a `:ipc32` variant on
-5.4 is rejected up front with `needs a 4.9-4.17 kernel — CONFIG_ANDROID_BINDER_IPC_32BIT was
-removed in 4.18`.
+4.9 and 5.4 sit on opposite sides of the 4.18 boundary where the kernel option ceases to exist, so
+the pair establishes that protocol selection holds across it.
+
+The negative cases are the point of the harness. A protocol-8 userspace against the protocol-7
+kernel fails, reproducing the field error verbatim in the guest console. And a protocol-7 variant
+of a kernel that cannot serve it is refused before anything is built:
+
+```text
+FAIL  5.4.290-ipc32: :ipc32 needs a 4.9-4.17 kernel — CONFIG_ANDROID_BINDER_IPC_32BIT was removed in 4.18
+```
+
+That refusal matters because kconfig drops an unsatisfiable symbol silently: asking for the option
+on a kernel that no longer has it once produced a protocol-8 kernel labelled `-ipc32` and reported
+success.
 
 Run it with:
 
