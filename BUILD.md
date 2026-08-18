@@ -269,7 +269,7 @@ Both defaults are read from the compiler's pointer size, so an unqualified build
 
 `-DBINDER_IPC_32BIT=ON` against a 64-bit compiler has no valid meaning, and CMake refuses to configure it:
 
-```
+```text
 BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
 ```
 
@@ -500,7 +500,7 @@ Read it off a device with the commands under
 [Critical: read `CONFIG_ANDROID_BINDER_IPC_32BIT` off the device](#critical-read-config_android_binder_ipc_32bit-off-the-device).
 A mismatch is fatal when libbinder opens the driver, and there is no fallback:
 
-```
+```text
 Binder driver protocol(7) does not match user space protocol(8)!
 ```
 
