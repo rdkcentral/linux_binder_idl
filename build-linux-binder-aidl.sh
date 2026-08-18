@@ -39,6 +39,11 @@ set -euo pipefail
 #   LDFLAGS        - Linker flags
 #   BUILD_TYPE     - Debug or Release (default: Release)
 #   TARGET_LIB32_VERSION - Set to OFF to build 64-bit target (default: ON for 32-bit)
+#   BINDER_IPC_32BIT - Binder wire protocol: ON = 7, OFF = 8. Must match the
+#                    target kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
+#                    (default: follows TARGET_LIB32_VERSION)
+#   BUILD_DIR      - CMake build tree (default: build-target)
+#   OUT_DIR        - Staging tree for libs/bin/include (default: out/target)
 #
 # Options:
 #   clean          - Remove all build artifacts and source directories (android/, build-*, out/)
@@ -64,8 +69,11 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="${SCRIPT_DIR}"
 
-BUILD_DIR="${ROOT_DIR}/build-target"
-OUT_DIR="${ROOT_DIR}/out/target"
+# Overridable so a caller can stage two configurations side by side without
+# them colliding in one reused CMake cache — the QEMU matrix needs a protocol-7
+# and a protocol-8 SDK at the same time.
+BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-target}"
+OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out/target}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 TARGET_LIB32="${TARGET_LIB32_VERSION:-ON}"
 CLEAN_BUILD=false
