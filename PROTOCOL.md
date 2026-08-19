@@ -203,6 +203,35 @@ a binary that opens `/dev/binder`, on the same protocol. Platforms already servi
 no change at all, so the work is confined to those still on 7, and the first task is finding out
 which those are.
 
+### What protocol 8 costs
+
+Protocol 8 widens the per-call metadata and nothing else. From the UAPI:
+
+| Structure | Fields that grow 4 → 8 bytes | Cost |
+| --- | --- | --- |
+| `binder_transaction_data` | `target.ptr`, `cookie`, `data_size`, `offsets_size`, `buffer`, `offsets` | ~24 bytes per call, fixed |
+| `flat_binder_object` | `binder`, `cookie` | 8 bytes per binder object passed |
+| the offsets array | each entry is a `binder_size_t` | 4 bytes per binder object passed |
+
+**The transaction payload does not widen.** The `data_size` bytes of a transaction are serialised by
+the generated bindings at explicit widths — `writeInt32` writes four bytes, `writeInt64` writes
+eight, a string is UTF-16 with a 32-bit length — and the protocol number does not reach any of it.
+A 32-bit process sends an `int32` as four bytes at either protocol.
+
+There is no per-datum conversion either. A 32-bit process placing a pointer in a 64-bit field
+zero-extends it: one additional store of a zero word, not a pass over the data.
+
+So a call passing no binder objects carries about 24 extra bytes, in one small structure copied
+once by the `ioctl`; a call passing two object references carries about 48. Set against the
+syscall, the copy of the payload itself and the scheduler round trip, that is the smaller term.
+
+A 32-bit userspace on a 32-bit kernel also crosses no translation layer at all — both sides compile
+the same structure layout. The kernel's compat path exists for a 32-bit process on a 64-bit kernel,
+and handles the ioctl ABI rather than the protocol.
+
+This is a structural account of what changes, not a measurement. A platform wanting a number should
+benchmark its own workload.
+
 ## Moving a platform to protocol 8
 
 For a 32-bit platform at 4.17 or older currently serving protocol 7:
