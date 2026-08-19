@@ -125,11 +125,27 @@ build the resolved config is reachable at `${STAGING_KERNEL_BUILDDIR}/.config` v
 `zcat /proc/config.gz | grep BINDER` answers it. Where no kernel config is in scope, state the
 switches explicitly rather than letting the build guess.
 
-A defconfig that says nothing about the option is the case to watch, not the safe case. On a
-32-bit kernel at 4.17 or older, silence means `default y` applies and the kernel serves protocol 7,
-so a defconfig with no mention of binder protocol at all and one carrying an explicit
-`CONFIG_ANDROID_BINDER_IPC_32BIT=y` describe the same platform. Reviewing defconfigs will not tell
-you which protocol a fleet runs; resolving them will.
+A defconfig that says nothing about the option is ambiguous, and it is the case to watch. Silence
+means one of two opposite things: on a stock kernel at 4.17 or older the symbol exists and
+`default y` applies, so the kernel serves protocol 7; on a kernel carrying a newer binder driver —
+common on vendor BSPs, which backport it onto older bases — the symbol does not exist at all and
+the kernel serves protocol 8. The defconfig looks identical either way.
+
+So a defconfig cannot tell you what a platform runs, whatever it says or omits. Resolve it, or ask
+the device:
+
+```sh
+zcat /proc/config.gz | grep ANDROID_BINDER      # absent entirely => no such symbol => protocol 8
+```
+
+On a running device the userspace answer is in the library itself, which is worth knowing because
+it is the side that has to match:
+
+```sh
+nm -DC /usr/lib/libbinder.so | grep ipcSetDataReference
+# ... unsigned long long const* ...  => binder_size_t is 64-bit => protocol 8
+# ... unsigned int const* ...        => binder_size_t is 32-bit => protocol 7
+```
 
 ## Specifying this to a platform vendor
 
@@ -148,6 +164,44 @@ platform's kernel protocol changes. Platforms already serving protocol 8 change 
 That obligation is enforced by the build rather than by agreement: a build that derives the
 protocol from the kernel produces the matching library on its own, and a kernel and userspace that
 have drifted apart fail at build time naming both values instead of at boot on a device.
+
+## Standardising on protocol 8
+
+Everything above describes how to carry two protocols correctly. The alternative is to carry one,
+and it is the stronger position: agree protocol 8 across every platform, and the class of failure
+this document exists for stops being reachable.
+
+The case for it:
+
+**Protocol 7 buys nothing that is wanted.** Upstream's own description is that it exists to support
+Android user-space at 4.4 and earlier, and that enabling it breaks newer user-space. It is a
+compatibility shim for something no RDK platform runs.
+
+**It costs the ability to mix.** Its 32-bit wire fields cannot carry a 64-bit pointer, so a
+protocol-7 platform can never introduce a 64-bit process — not a vendor layer, not a single
+service. Protocol 8 leaves that door open at no cost, including on a platform that is entirely
+32-bit today.
+
+**It is already the majority position.** Every 64-bit kernel serves protocol 8 because the option
+cannot be set. Every kernel from 4.18 serves it because the option was removed. A vendor BSP that
+backports a newer binder driver onto an older base serves it too, since the backported driver has
+no such option. Protocol 7 survives only on a stock kernel at 4.17 or older that has not opted out
+of a default.
+
+**A 32-bit platform on an old kernel can run it.** This is the assumption worth checking before
+concluding a legacy platform is stuck: protocol 8 needs 64-bit *fields*, not a 64-bit anything.
+An armv7l platform on a 4.9 kernel runs protocol 8 with a 32-bit userspace, one 32-bit
+`libbinder.so`, and no 64-bit process anywhere.
+
+**One protocol removes the switch as a decision.** With every platform on 8, `BINDER_IPC_32BIT` is
+never chosen by anyone: the derivation reads the kernel and confirms what is already true, and its
+only remaining job is to fail the build if a platform ever drifts. The matrix in this document
+collapses to a single row.
+
+What it takes is agreement rather than engineering — every platform owner, and every party shipping
+a binary that opens `/dev/binder`, on the same protocol. Platforms already serving protocol 8 need
+no change at all, so the work is confined to those still on 7, and the first task is finding out
+which those are.
 
 ## Moving a platform to protocol 8
 
