@@ -15,6 +15,46 @@ Terminating: Binder driver protocol(7) does not match user space protocol(8)!
 
 A mismatched build compiles and links cleanly. The failure appears on the device at boot.
 
+## What the two protocols are
+
+The protocol number selects the width of the pointer and size fields on the wire, and nothing
+else. From `linux/android/binder.h`:
+
+```c
+#ifdef BINDER_IPC_32BIT
+typedef __u32 binder_size_t;      /* protocol 7 */
+typedef __u32 binder_uintptr_t;
+#else
+typedef __u64 binder_size_t;      /* protocol 8 */
+typedef __u64 binder_uintptr_t;
+#endif
+```
+
+| Protocol | Wire fields | Who can participate |
+| --- | --- | --- |
+| **7** | 32-bit | a 32-bit kernel with 32-bit userspace, exclusively |
+| **8** | 64-bit | any 32-bit or 64-bit process, in any combination |
+
+**Protocol 8 does not mean 64-bit.** It means 64-bit-wide *fields*, which a 32-bit process uses
+perfectly well — it stores its 32-bit pointers in them. A wholly 32-bit platform, 32-bit kernel and
+32-bit userspace throughout, runs protocol 8 normally, and on any kernel from 4.18 that is the only
+option there is. Protocol 8 permits mixing; it does not require it.
+
+Protocol 7 is not the 32-bit option, it is the **legacy-compat** option. Its 32-bit fields cannot
+hold a 64-bit pointer, which is why the kernel side is `depends on !64BIT` and why nothing 64-bit
+can be present anywhere on such a platform. Taking it costs the ability to mix, and upstream is
+explicit about what it is for:
+
+```text
+Enable this to support an old 32-bit Android user-space (v4.4 and earlier).
+
+Note that enabling this will break newer Android user-space.
+```
+
+8 is the current protocol; there is no 9. Note that the *userspace* header still carries the
+`#ifdef` at 5.15, so a protocol-7 library can still be compiled, while the kernel-side option is
+gone — a combination that guarantees a mismatch, because no modern kernel can answer it.
+
 ## Three inputs must agree
 
 They are independent axes, and each fails at a different time.
@@ -56,15 +96,27 @@ project's CMake and using that API must set it itself.
 
 ## Which kernel serves which protocol
 
-Upstream `drivers/android/Kconfig` declares the option `depends on !64BIT` and removes it in the
-4.18/4.19 window. Protocol 7 therefore exists on exactly one kind of target.
+Upstream `drivers/android/Kconfig` declares the option `depends on !64BIT && ANDROID_BINDER_IPC`
+with `default y`, and removes it before 5.4. Protocol 7 therefore exists on exactly one kind of
+target.
 
 | Target kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | Protocol served |
 | --- | --- | --- |
-| 32-bit, ≤ 4.17 | `=y` | **7** |
-| 32-bit, ≤ 4.17 | unset | **8** |
+| 32-bit, ≤ 4.17 | `=y` (**the default**) | **7** |
+| 32-bit, ≤ 4.17 | explicitly unset | **8** |
 | Any kernel ≥ 4.18 | option removed | **8** |
 | Any 64-bit kernel | cannot be set | **8** |
+
+**`default y` matters.** On a 32-bit kernel at 4.17 or older, protocol 7 is what the kernel serves
+unless someone turned the option off. It is the state such a kernel arrives in, not a choice
+somebody made.
+
+That also means a legacy platform is not stuck there. Unsetting the option in its kernel config
+moves it to protocol 8 — row two above — on the same kernel version, with nothing else about the
+platform changing. Both sides must move together, because libbinder compares for exact equality,
+so it is a coordinated kernel and userspace change rather than a rolling one. A platform that
+makes that move has one protocol for its whole life, and every build on it takes
+`BINDER_IPC_32BIT=OFF`.
 
 Read the kernel's resolved `.config`, not its `defconfig`. The defconfig is an input: config
 fragments and Kconfig defaults can set or clear the symbol without it appearing there. In a Yocto
