@@ -196,11 +196,30 @@ Read the resolved `.config`, never the `defconfig` — see above for why. Fail t
 kernel is in scope rather than defaulting: a guessed protocol builds and links, then terminates
 the process on the device.
 
-On a 64-bit platform with 32-bit middleware this recipe is built twice — once as
-`linux-binder` and once as `lib32-linux-binder`. `binder_ipc32()` returns `OFF` for both, because
-there is one kernel and it serves one protocol, while `SITEINFO_BITS` differs between the two and
-selects the matching ELF class. That is the mixed configuration, expressed without a per-platform
-override.
+### What that resolves to for your layer
+
+One expression, but it produces a different answer per role. Find the row you are building:
+
+| Your layer | `SITEINFO_BITS` | Bitness switch | Protocol switch |
+| --- | --- | --- | --- |
+| 32-bit userspace — middleware, or vendor on a 32-bit platform | `32` | `-DTARGET_LIB32_VERSION=ON` | from the kernel: `ON` only for a 32-bit kernel ≤ 4.17 with the option set, `OFF` otherwise |
+| 64-bit userspace — vendor on a 64-bit platform | `64` | `-DTARGET_LIB64_VERSION=ON` | always `OFF` |
+
+**If you are a 32-bit layer, this is the row to get right.** A 32-bit toolchain defaults to
+protocol 7, so on a protocol-8 kernel — which is every 64-bit kernel and every kernel from 4.18 —
+the build must end up at `BINDER_IPC_32BIT=OFF`. Deriving from the kernel gives you that; hardcoding
+`ON` because the layer is 32-bit is the mistake that produces the boot failure. In OE this layer is
+usually the `lib32-` multilib variant, and it is the one that has a genuine choice to get wrong.
+
+**If you are a 64-bit layer, the protocol is not a decision.** A 64-bit kernel cannot serve
+protocol 7 — the Kconfig option is `depends on !64BIT` — so the answer is always `OFF`, and the
+build refuses `-DBINDER_IPC_32BIT=ON` against a 64-bit toolchain rather than letting it through.
+The derivation cannot produce a wrong answer here.
+
+On a 64-bit platform carrying 32-bit middleware, both rows apply: the recipe is built twice, as
+`linux-binder` and as `lib32-linux-binder`. `binder_ipc32()` returns `OFF` for both, because there
+is one kernel serving one protocol, while `SITEINFO_BITS` differs and selects each one's ELF class.
+That is the mixed configuration, expressed without a per-platform override.
 
 The library's own guards catch a contradiction that slips through: a declared bitness that
 disagrees with the compiler, or protocol 7 against a 64-bit toolchain, is refused at configure
