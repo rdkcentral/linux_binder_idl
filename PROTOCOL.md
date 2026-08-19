@@ -125,6 +125,50 @@ build the resolved config is reachable at `${STAGING_KERNEL_BUILDDIR}/.config` v
 `zcat /proc/config.gz | grep BINDER` answers it. Where no kernel config is in scope, state the
 switches explicitly rather than letting the build guess.
 
+A defconfig that says nothing about the option is the case to watch, not the safe case. On a
+32-bit kernel at 4.17 or older, silence means `default y` applies and the kernel serves protocol 7,
+so a defconfig with no mention of binder protocol at all and one carrying an explicit
+`CONFIG_ANDROID_BINDER_IPC_32BIT=y` describe the same platform. Reviewing defconfigs will not tell
+you which protocol a fleet runs; resolving them will.
+
+## Specifying this to a platform vendor
+
+State the protocol the platform runs. Do not hand over a list of switches: the kernel and the
+userspace take different ones, and a vendor given a flat list can apply the userspace switch
+without the kernel change, which is the half-migration that produces the boot failure.
+
+| Who | What they are told | What they set |
+| --- | --- | --- |
+| Kernel / BSP owner | the protocol this platform serves | `CONFIG_ANDROID_BINDER_IPC_32BIT`, explicitly, in every 32-bit defconfig |
+| Anyone building against libbinder | derive from that kernel | nothing by hand — the build reads the kernel |
+
+A rebuild is obliged for everything on a platform that links libbinder if and only if that
+platform's kernel protocol changes. Platforms already serving protocol 8 change nothing.
+
+That obligation is enforced by the build rather than by agreement: a build that derives the
+protocol from the kernel produces the matching library on its own, and a kernel and userspace that
+have drifted apart fail at build time naming both values instead of at boot on a device.
+
+## Moving a platform to protocol 8
+
+For a 32-bit platform at 4.17 or older currently serving protocol 7:
+
+1. **Unset the option in every 32-bit defconfig for that platform** — both the ones that set it
+   explicitly and the ones that say nothing and inherit `default y`. The line to add is
+   `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set`.
+2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig.
+3. **Rebuild everything on the platform that links libbinder** — servicemanager, middleware,
+   vendor implementations — in the same drop. With the protocol derived from the kernel this needs
+   no switch changes; the builds follow the kernel.
+
+Settle one question before starting: is everything on the platform that opens `/dev/binder` built
+from source in the pipeline, or does any of it arrive prebuilt? A prebuilt protocol-7 binary that
+cannot be rebuilt holds the whole platform at protocol 7, because the version check admits no
+mixed state.
+
+The change lands as a flag day. libbinder compares the versions for exact equality when it opens
+the driver, so there is no interim in which some processes have moved and others have not.
+
 ## Two builds per platform
 
 The binder library is built once per role, and the two roles differ only in bitness:
