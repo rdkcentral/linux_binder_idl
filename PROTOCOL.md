@@ -121,9 +121,8 @@ makes that move has one protocol for its whole life, and every build on it takes
 Read the kernel's resolved `.config`, not its `defconfig`. The defconfig is an input: config
 fragments and Kconfig defaults can set or clear the symbol without it appearing there. In a Yocto
 build the resolved config is reachable at `${STAGING_KERNEL_BUILDDIR}/.config` via
-`do_configure[depends] += "virtual/kernel:do_shared_workdir"`. On a running device,
-`zcat /proc/config.gz | grep BINDER` answers it. Where no kernel config is in scope, state the
-switches explicitly rather than letting the build guess.
+`do_configure[depends] += "virtual/kernel:do_shared_workdir"`. Where no kernel config is in scope,
+state the switches explicitly rather than letting the build guess.
 
 A defconfig that says nothing about the option is ambiguous, and it is the case to watch. Silence
 means one of two opposite things: on a stock kernel at 4.17 or older the symbol exists and
@@ -135,8 +134,15 @@ So a defconfig cannot tell you what a platform runs, whatever it says or omits. 
 the device:
 
 ```sh
-zcat /proc/config.gz | grep ANDROID_BINDER      # absent entirely => no such symbol => protocol 8
+zcat /proc/config.gz | grep ANDROID_BINDER      # needs CONFIG_IKCONFIG_PROC=y
+grep ANDROID_BINDER /boot/config-"$(uname -r)"  # distro kernels
+grep ANDROID_BINDER .config                     # the kernel build tree
 ```
+
+`/proc/config.gz` exists only when the kernel was built with `CONFIG_IKCONFIG_PROC=y`, which many
+embedded kernels omit — fall through to the other two, or ask whoever supplies the kernel. Read the
+result as three states, not two: `=y` is protocol 7, `# ... is not set` is protocol 8, and the
+symbol being **absent entirely** is also protocol 8 — it means the kernel has no such option.
 
 On a running device the userspace answer is in the library itself, which is worth knowing because
 it is the side that has to match:
