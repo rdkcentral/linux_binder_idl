@@ -15,7 +15,7 @@ out/
 
 ### Developer/Architecture Team (Wrapper Scripts)
 
-- `build-linux-binder-aidl.sh`: Build target runtime (default: 64-bit, override with `TARGET_LIB32_VERSION=ON`)
+- `build-linux-binder-aidl.sh`: Build target runtime (bitness follows the toolchain; override with `TARGET_LIB32_VERSION`)
   - Also builds host AIDL by default; use `no-host-aidl` to skip if already available
   - Respects Yocto environment: `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`
   - Automatically passes these to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPILER`, `CMAKE_C_FLAGS`, etc.
@@ -61,7 +61,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Separate build trees:** `build-host/` for AIDL compiler, `build-target/` for runtime libs (never mix)
 - **Build environment detection:** CMake auto-detects Yocto via `OECORE_*` environment variables (lines 145–150)
 - **AidlGenerator macro:** CMakeLists.txt defines macro for generating stubs/proxies (line 242+); used by examples but not production
-- **Default architecture:** 64-bit auto-detected unless `TARGET_LIB32_VERSION=ON` explicitly set (line 172)
+- **Default architecture:** follows the toolchain — both `TARGET_LIB32_VERSION` and `BINDER_IPC_32BIT` are
+  derived from the compiler's pointer size when undefined, so an unqualified build matches the compiler it
+  was given: 32-bit → protocol 7, 64-bit → protocol 8. An explicit `-D` value always wins
 
 ### Source Code Management
 
@@ -89,8 +91,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 
 ### Kernel & Runtime Requirements
 
-- **Kernel version:** 5.16+ with `CONFIG_ANDROID_BINDER_IPC=y`
-- **32-bit userspace on 64-bit kernel:** Common in embedded; requires `CONFIG_ANDROID_BINDER_IPC_32BIT=y` in kernel
+- **Kernel version:** 4.9 floor, through 5.16 and later, with `CONFIG_ANDROID_BINDER_IPC=y`
+- **Wire protocol:** set by the kernel's `CONFIG_ANDROID_BINDER_IPC_32BIT` (`=y` → protocol 7, unset/absent → protocol 8); libbinder must be built to match or `ProcessState` init fails
+- **32-bit userspace on 64-bit kernel:** Common in embedded; protocol **8** — `CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream and was removed in 4.18, so it cannot be set on a 64-bit kernel
 - **Binder device:** `/dev/binder` must exist (via binderfs or static device node)
 - **Servicemanager:** Must run before any binder clients start; use systemd service in production
 - **Systemd service:** `SYSTEMD_AUTO_ENABLE=enable` in Yocto ensures auto-start on boot
@@ -109,13 +112,18 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
   ./build-linux-binder-aidl.sh
   ```
 - **Direct CMake:** Pass compiler and flags explicitly (see Production/Yocto section above)
-- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets
-- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets (default auto-detected)
+- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — the default when the toolchain is 32-bit
+- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — the default when the toolchain
+  is 64-bit; the declaration adds no `-m64`, so it must agree with `CC`/`CXX`
+  (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
 - Never set both 32-bit and 64-bit flags simultaneously
+- **Bitness and wire protocol are independent axes:**
+  - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture
+  - `BINDER_IPC_32BIT` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
+  - Both default from the toolchain's pointer size, not from each other; protocol 7 requires a 32-bit toolchain, and `-DBINDER_IPC_32BIT=ON` against a 64-bit compiler is rejected at configure time
 - **32-bit userspace on 64-bit kernel:** Common in embedded systems for memory efficiency
-  - Build with `TARGET_LIB32_VERSION=ON` even if kernel is 64-bit
-  - Requires kernel config `CONFIG_ANDROID_BINDER_IPC_32BIT=y`
-  - Match build to *userspace* architecture, not kernel architecture
+  - Build with `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` (protocol 8)
+  - The `OFF` is not optional here — a 32-bit toolchain defaults to protocol 7, which a protocol-8 kernel refuses
 
 ## Testing & Validation
 
@@ -123,7 +131,7 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Comprehensive test:** `./test_build.sh` (~10-20 min) - full validation suite with zero-warnings check
 - **Example IPC test:** `./build-binder-example.sh` - builds FWManager service/client, tests binder IPC
 - **Clean builds:** Add `clean` to any build script (e.g., `./build-linux-binder-aidl.sh clean`)
-- **Runtime testing:** Requires Linux 5.16+ with binder; see BUILD.md §"Testing" for Vagrant/KVM setup
+- **Runtime testing:** the *supported target* floor is 4.9 (see "Kernel & Runtime Requirements"). The 5.16+ figure is a property of the desktop **host** used for Vagrant/KVM runs, where binderfs makes provisioning `/dev/binder` straightforward — it is not a requirement on the device. See BUILD.md §"Testing"
 
 ## Common Pitfalls
 

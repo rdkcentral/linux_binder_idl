@@ -498,6 +498,8 @@ test_5() {
 test_6() {
     clean_build_state
     echo "Building target binder libraries (this may take a minute)..."
+    # Deliberately unqualified: this is BUILD.md's documented native build, and
+    # it must resolve its own bitness from the toolchain (#57).
     if ./build-linux-binder-aidl.sh 2>&1 | tee /tmp/target_build.log > /dev/null; then
         print_pass "Target binder libraries build completed"
         check_warnings_errors /tmp/target_build.log "Target build"

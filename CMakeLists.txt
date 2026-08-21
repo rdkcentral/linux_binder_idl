@@ -196,10 +196,17 @@ if (BUILD_WITHOUT_LIBLOG)
     set(BUILD_WITH_LIBLOG OFF)
 endif ()
 
-# Set default binder library as 32 bit (ARM userspace target)
-# Use conditional set so -DTARGET_LIB32_VERSION=OFF can override for future 64-bit
+# Declared target bitness. Neither this nor TARGET_LIB64_VERSION adds -m32/-m64:
+# the ELF class comes from CC/CXX. What the declaration does decide is the
+# default wire protocol below, so it has to agree with the toolchain or the
+# guard further down rejects the build. Follow CMAKE_SIZEOF_VOID_P rather than
+# assuming 32-bit — an explicit -DTARGET_LIB32_VERSION still wins.
 if (NOT DEFINED TARGET_LIB32_VERSION)
-    set(TARGET_LIB32_VERSION ON)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(TARGET_LIB32_VERSION ON)
+    else ()
+        set(TARGET_LIB32_VERSION OFF)
+    endif ()
 endif()
 if (TARGET_LIB64_VERSION)
     message("Building 64bit binder library")
@@ -212,20 +219,44 @@ endif ()
 #     all-32-bit userspace on a CONFIG_ANDROID_BINDER_IPC_32BIT kernel.
 #   - protocol 8 (unset, 64-bit handles) — required for a MIXED platform (32-bit
 #     MW + 64-bit vendor sharing one kernel); a 32-bit process CAN run protocol 8.
-# Default: follow the compile bitness (32-bit -> protocol 7) for backward
-# compatibility. Override with -DBINDER_IPC_32BIT=OFF to build a 32-bit
-# protocol-8 library (the mixed config), or =ON to force protocol 7.
+# Default: follow the TOOLCHAIN, not TARGET_LIB32_VERSION. The declaration adds
+# no -m32 and can disagree with the compiler it is given; deriving protocol 7
+# from it meant `-DTARGET_LIB32_VERSION=ON` with a 64-bit compiler selected a
+# protocol nobody asked for and the guard below then rejected the build. The
+# toolchain cannot disagree with itself. Override with -DBINDER_IPC_32BIT=OFF to
+# build a 32-bit protocol-8 library (the mixed config); an explicit value wins.
 if (NOT DEFINED BINDER_IPC_32BIT)
-    if (TARGET_LIB32_VERSION)
+    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
         set(BINDER_IPC_32BIT ON)
     else ()
         set(BINDER_IPC_32BIT OFF)
     endif ()
 endif ()
+# Check the TOOLCHAIN first. TARGET_LIB32_VERSION adds no -m32 — the ELF class
+# comes from CC/CXX alone — so a declaration can disagree with the compiler it is
+# given, and only the compiler is ground truth. Under BINDER_IPC_32BIT the UAPI
+# narrows binder_uintptr_t to 32 bits, so a 64-bit pointer model truncates its
+# handles, and no 64-bit kernel serves protocol 7 in any case
+# (drivers/android/Kconfig marks CONFIG_ANDROID_BINDER_IPC_32BIT `depends on
+# !64BIT`). This guard runs before the declared-flag one below so the diagnostic
+# names the real cause rather than a declaration the caller may not have set.
+if (BINDER_IPC_32BIT AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR
+        "BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain "
+        "(CMAKE_SIZEOF_VOID_P=${CMAKE_SIZEOF_VOID_P}). Protocol 7 carries 32-bit "
+        "binder handles and cannot represent 64-bit pointers, and no 64-bit kernel "
+        "serves it. Either cross-compile with a 32-bit toolchain, or select "
+        "protocol 8 with -DBINDER_IPC_32BIT=OFF.")
+endif ()
+# Declared-flag consistency. Reachable only on a 32-bit toolchain (the guard
+# above has already rejected 64-bit), so this catches a caller who asked for
+# protocol 7 while declaring a 64-bit target.
 if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
     message(FATAL_ERROR
-        "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit build; a 64-bit binder "
-        "library must use protocol 8 — set -DBINDER_IPC_32BIT=OFF for 64-bit.")
+        "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit target, but "
+        "TARGET_LIB32_VERSION is OFF. Declare the bitness the toolchain actually "
+        "has (-DTARGET_LIB32_VERSION=ON), or select protocol 8 with "
+        "-DBINDER_IPC_32BIT=OFF.")
 endif ()
 
 ###########################################################
@@ -731,9 +762,14 @@ if (BUILD_ENV_YOCTO OR NOT BUILD_HOST_AIDL)
         -DANDROID_BASE_UNIQUE_FD_DISABLE_IMPLICIT_CONVERSION -DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION
     )
     # Wire protocol is independent of compile bitness (see BINDER_IPC_32BIT above).
+    # PUBLIC, not PRIVATE: the installed public header binder/Parcel.h switches
+    # binder_size_t and the mObjects layout on BINDER_IPC_32BIT, so a consumer
+    # that compiles without it sees a different Parcel than libbinder exports —
+    # a silent ABI mismatch, not a link error. Consumers that do not build
+    # through CMake must define it themselves; BUILD.md says so.
     if (BINDER_IPC_32BIT)
         message("  binder wire protocol: 7 (BINDER_IPC_32BIT=1)")
-        target_compile_options(binder PRIVATE -DBINDER_IPC_32BIT=1)
+        target_compile_definitions(binder PUBLIC BINDER_IPC_32BIT=1)
     else ()
         message("  binder wire protocol: 8")
     endif ()

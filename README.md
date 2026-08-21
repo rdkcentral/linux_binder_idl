@@ -5,9 +5,14 @@ The Android 13 AOSP source code is cloned from `Google's` repositories. The Andr
  is __*android-13.0.0_r74*__, and the code has been modified to make it compatible with Linux.
 The project is primarily designed to build the binder runtime libraries for embedded devices.
 It also provides the `aidl` compiler for the architecture team to generate interface code offline.
-The default binder libraries generated are 64-bit, but this can be overridden using CMake variables.
+The declared target bitness and the binder wire protocol both follow the toolchain by default, and
+either can be overridden using CMake variables.
 
 **For comprehensive build documentation, see [BUILD.md](BUILD.md).**
+
+**For which switches to build with for a given target kernel, see [PROTOCOL.md](PROTOCOL.md).**
+A wire-protocol mismatch between the library and the kernel terminates the process at boot, so
+the switches have to be chosen from the target kernel's configuration.
 
 ---
 
@@ -47,6 +52,7 @@ The default binder libraries generated are 64-bit, but this can be overridden us
 - GCC 11.2.0 or later (minimum GCC 9.4.0)
 
 **For detailed kernel configuration, runtime setup, and Yocto/BitBake integration, see [BUILD.md](BUILD.md).**
+**For the kernel-to-switch selection matrix, see [PROTOCOL.md](PROTOCOL.md).**
 
 ---
 
@@ -216,8 +222,9 @@ Development wrapper scripts (`build-*.sh`) automatically handle CMake variables.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `ON` |
-| `TARGET_LIB64_VERSION` | Build 64-bit libraries | Auto-detect |
-| `TARGET_LIB32_VERSION` | Build 32-bit libraries | `OFF` |
+| `TARGET_LIB64_VERSION` | Declare a 64-bit target | follows the toolchain |
+| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
 
 **See [BUILD.md](BUILD.md) for:**
 
