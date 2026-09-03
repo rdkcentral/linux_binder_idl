@@ -320,6 +320,14 @@ if (NOT DEFINED CMAKE_INSTALL_INCDIR)
     message("cmake install header dir ${CMAKE_INSTALL_INCDIR}")
 endif ()
 
+# Record the prefix in every installed artifact, so a build installed outside the
+# loader's default search path resolves its own dependencies. This is what lets
+# the middleware and the vendor layer install to prefixes of their own and have
+# each layer's binaries load the copy belonging to that layer. Must precede the
+# first add_library()/add_executable().
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/InstallRunpath.cmake)
+binder_install_runpath()
+
 ###########################################################
 # Checkout Required repos from AOSP
 ###########################################################
