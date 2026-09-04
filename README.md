@@ -11,6 +11,8 @@ either can be overridden using CMake variables.
 **For comprehensive build documentation, see [BUILD.md](BUILD.md).**
 
 **For which switches to build with for a given target kernel, see [PROTOCOL.md](PROTOCOL.md).**
+
+**For what the generated C++ guarantees to its consumers, see [CODEGEN.md](CODEGEN.md).**
 A wire-protocol mismatch between the library and the kernel terminates the process at boot, so
 the switches have to be chosen from the target kernel's configuration.
 
