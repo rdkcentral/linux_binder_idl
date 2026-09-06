@@ -32,9 +32,21 @@
 # DT_RUNPATH is not inherited transitively: a service carrying
 # RUNPATH=/mw/usr/lib links libbinder.so, but that entry does not help
 # libbinder.so find liblog, libbase, libcutils or libutils in the same prefix.
-# Each library needs its own. DT_RPATH is inherited, but LD_LIBRARY_PATH
-# overrides it, which with two copies of the library present is worse than the
-# problem it solves -- hence new dtags.
+# Each library needs its own.
+#
+# The glibc search order is DT_RPATH (only when DT_RUNPATH is absent), then
+# LD_LIBRARY_PATH, then DT_RUNPATH, then the cache and the default directories.
+# The two tags therefore differ in both respects, and in opposite directions:
+# DT_RPATH is inherited by dependency lookups and outranks LD_LIBRARY_PATH,
+# while DT_RUNPATH is neither.
+#
+# New dtags are chosen anyway. DT_RPATH is deprecated, and OpenEmbedded's
+# tooling normalises to DT_RUNPATH, so emitting the deprecated tag fights the
+# platform rather than the problem. Its transitivity buys nothing here because
+# every artifact is given its own entry, which is what makes the prefix hold
+# through a dependency chain. The cost it does carry is real and belongs in the
+# layout's rules: LD_LIBRARY_PATH takes precedence over DT_RUNPATH, so pointing
+# it at another layer's prefix defeats the separation. See BUILD.md.
 #
 # Call once, before any add_library() or add_executable(), and after project():
 # CMAKE_INSTALL_RPATH is read at target creation, and the compiler identity is
@@ -93,11 +105,11 @@ macro(binder_install_runpath)
             set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
             set(CMAKE_SKIP_INSTALL_RPATH OFF)
 
-            # DT_RUNPATH rather than DT_RPATH. GNU ld has defaulted to new dtags
-            # for long enough that this is usually already the case, but the
-            # default is a toolchain build option, and which tag is emitted
-            # decides whether LD_LIBRARY_PATH can override the prefix. lld emits
-            # RUNPATH only and needs no flag.
+            # DT_RUNPATH rather than DT_RPATH, for the reasons in the header
+            # comment. GNU ld has defaulted to new dtags for long enough that
+            # this is usually already the case, but the default is a toolchain
+            # build option, so which tag is emitted is not something to assume.
+            # lld emits DT_RUNPATH only and needs no flag.
             if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
                 foreach (_binder_flags_var
                          CMAKE_SHARED_LINKER_FLAGS

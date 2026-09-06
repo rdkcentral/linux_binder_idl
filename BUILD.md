@@ -312,15 +312,27 @@ The `RUNPATH` is on every library, not only the executables, because
 `DT_RUNPATH` is not inherited transitively — a service carrying
 `RUNPATH=/mw/usr/lib` links `libbinder.so`, but that entry does not help
 `libbinder.so` find `liblog`, `libbase`, `libcutils` and `libutils` in the same
-prefix. New dtags are used deliberately: `DT_RPATH` *is* inherited, but
-`LD_LIBRARY_PATH` overrides it, which with two copies installed is worse than
-the problem it solves.
+prefix. Each needs its own, and that is what makes the prefix hold through a
+dependency chain.
 
-Three rules go with the layout:
+The loader searches `DT_RPATH` (only when `DT_RUNPATH` is absent), then
+`LD_LIBRARY_PATH`, then `DT_RUNPATH`, then the cache and the default
+directories. So the two tags differ in opposite directions: `DT_RPATH` is
+inherited by dependency lookups *and* outranks `LD_LIBRARY_PATH`, while
+`DT_RUNPATH` is neither. New dtags are chosen anyway — `DT_RPATH` is deprecated
+and OpenEmbedded's tooling normalises to `DT_RUNPATH`, and its transitivity buys
+nothing once every artifact carries its own entry. The cost it does carry is the
+third rule below.
+
+Four rules go with the layout:
 
 - **Neither prefix belongs in `/etc/ld.so.conf.d/`.** Resolution comes from
   `RUNPATH` only. A prefix on the global path re-introduces the ambiguity this
   closes, and both layers then load whichever copy that path reaches first.
+- **`LD_LIBRARY_PATH` must not point one layer at the other's prefix.** It is
+  searched before `DT_RUNPATH`, so it wins — this is the one way to defeat the
+  separation from outside the build, and it applies to service unit files and
+  wrapper scripts as much as to an interactive shell.
 - **`servicemanager` is installed under each prefix, but only one can run per
   binder device.** Either one is disabled, or the two run on separate device
   nodes — `ProcessState::initWithDriver()` selects the node, and note it falls
