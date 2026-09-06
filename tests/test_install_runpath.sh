@@ -109,9 +109,13 @@ if [ "${#off_rpaths[@]}" -ne 0 ]; then
 fi
 pass "#62: BINDER_INSTALL_RUNPATH=OFF suppresses the install RPATH"
 
-# --- new dtags, so the prefix is not overridable by LD_LIBRARY_PATH --------
-# DT_RPATH is inherited transitively but LD_LIBRARY_PATH wins over it, which
-# with two copies of the library installed is worse than the problem it solves.
+# --- new dtags, so the tag emitted is DT_RUNPATH ---------------------------
+# The loader searches DT_RPATH (only when DT_RUNPATH is absent), then
+# LD_LIBRARY_PATH, then DT_RUNPATH. DT_RPATH is deprecated and OE normalises to
+# DT_RUNPATH, and its transitivity buys nothing here because every artifact is
+# given its own entry — so new dtags, and the accompanying rule that
+# LD_LIBRARY_PATH must not point one layer at the other's prefix.
+#
 # The flag reaches the generated link rules rather than the cache, because the
 # macro sets the linker-flag variables in directory scope.
 mapfile -t link_rules < <(find "${WORK}/sep/CMakeFiles" -maxdepth 2 -name link.txt 2>/dev/null | sort)
@@ -131,7 +135,7 @@ compiler_id="$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\([^"]*\)").*/\1/p' \
 
 if [ "${compiler_id}" = "GNU" ]; then
     if [ "${with_dtags}" -ne "${#link_rules[@]}" ]; then
-        fail "#62: --enable-new-dtags on ${with_dtags}/${#link_rules[@]} link rules — GNU ld may emit DT_RPATH, which LD_LIBRARY_PATH overrides"
+        fail "#62: --enable-new-dtags on ${with_dtags}/${#link_rules[@]} link rules — GNU ld may then emit the deprecated DT_RPATH, which OE tooling normalises away"
     fi
     pass "#62: --enable-new-dtags on all ${with_dtags} link rules, so DT_RUNPATH rather than DT_RPATH"
 else
