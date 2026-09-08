@@ -1,0 +1,11 @@
+# 32-bit kernel serving the modern binder protocol (version 8).
+# Apply IN ADDITION to binder.fragment for the 32-bit protocol-8 matrix entry:
+# a 32-bit kernel whose userspace is 32-bit and speaks protocol 8, which is what
+# every kernel from 4.18 serves and what a vendor BSP backporting a newer binder
+# driver onto an older base serves too.
+#
+# The explicit disable is required, not cosmetic. On a 32-bit kernel at 4.17 or
+# older the symbol exists and is `default y`, so leaving it unset here would
+# yield protocol 7. binder.fragment can leave it unset only because its other
+# variants are 64-bit, where `depends on !64BIT` makes the symbol unavailable.
+# CONFIG_ANDROID_BINDER_IPC_32BIT is not set

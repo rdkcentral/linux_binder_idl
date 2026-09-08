@@ -23,7 +23,9 @@
 # `variant` file recording the guest arch and binder protocol.
 #
 # Default guest is x86_64 / protocol 8. A `:ipc32` suffix builds the legacy
-# protocol-7 variant, which must be a 32-bit (i386) guest at 4.17 or older.
+# protocol-7 variant, which must be a 32-bit (i386) guest at 4.17 or older. An
+# `:i386` suffix builds the third kernel that exists: 32-bit at protocol 8, the
+# kernel side of a 32-bit userspace on a modern binder driver.
 #
 # Buildroot is used only for the KERNEL (its kernel-build plumbing handles the
 # cross toolchain + config-fragment merge); the test's userspace comes from the
@@ -42,12 +44,17 @@ HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 OUT="${HERE}/kernels"
 FRAGMENT="${HERE}/kconfig/binder.fragment"
 IPC32_FRAGMENT="${HERE}/kconfig/binder-ipc32.fragment"
+IPC32OFF_FRAGMENT="${HERE}/kconfig/binder-ipc32-off.fragment"
 
 # Default matrix — one stable point release per minor across the supported
-# range (4.9 floor → 5.16), plus the legacy protocol-7 variant. A `:ipc32`
-# suffix selects protocol 7: a 32-bit (i386) guest with binder-ipc32.fragment
-# merged on top.
-VERSIONS="${VERSIONS:-4.9.337 4.9.337:ipc32 5.4.290 5.10.205 5.15.148 5.16.20}"
+# range (4.9 floor → 5.16), plus both 32-bit kernels at the 4.9 floor. Suffixes
+# select the guest and the protocol; without one the guest is x86_64 at
+# protocol 8.
+#   :ipc32  protocol 7 — i386 guest, binder-ipc32.fragment merged on top
+#   :i386   protocol 8 on a 32-bit kernel — i386 guest, binder-ipc32-off.fragment
+# 4.9 carries both because it is the one version where the same kernel can serve
+# either protocol, which is the pair seen in production on identical silicon.
+VERSIONS="${VERSIONS:-4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.10.205 5.15.148 5.16.20}"
 BR_VERSION="${BR_VERSION:-2024.02.9}"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -96,16 +103,27 @@ built=0
 for spec in ${VERSIONS}; do
     ver="${spec%%:*}"
     ipc32=false
-    case "${spec}" in *:ipc32) ipc32=true ;; esac
-    label="${ver}"; ${ipc32} && label="${ver}-ipc32"
+    guest32=false
+    case "${spec}" in
+        *:ipc32) ipc32=true; guest32=true ;;
+        *:i386)  guest32=true ;;
+    esac
+    if ${ipc32}; then      label="${ver}-ipc32"
+    elif ${guest32}; then  label="${ver}-i386"
+    else                   label="${ver}"
+    fi
     o="${BUILDROOT}/output-${label}"
     dest="${OUT}/${label}"
 
     echo ""
     echo "=== kernel ${label} ==="
 
-    # Guest arch follows the protocol: protocol 7 only exists on a 32-bit
-    # kernel at 4.17 or older (see ipc32_supported above).
+    # Three kernels exist, and the guest arch is not a free choice in two of
+    # them. Protocol 7 only exists on a 32-bit kernel at 4.17 or older (see
+    # ipc32_supported above), so :ipc32 is i386. A 64-bit kernel can only serve
+    # protocol 8, so the plain spec is x86_64. :i386 is the third: a 32-bit
+    # kernel serving protocol 8, which needs the option turned OFF explicitly
+    # because on such a kernel it is `default y`.
     if ${ipc32}; then
         if ! ipc32_supported "${ver}"; then
             echo "  FAIL  ${label}: :ipc32 needs a 4.9-4.17 kernel — CONFIG_ANDROID_BINDER_IPC_32BIT was removed in 4.18"
@@ -113,6 +131,9 @@ for spec in ${VERSIONS}; do
         fi
         arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
         frags="${FRAGMENT} ${IPC32_FRAGMENT}"
+    elif ${guest32}; then
+        arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
+        frags="${FRAGMENT} ${IPC32OFF_FRAGMENT}"
     else
         arch="x86_64"; br_arch="BR2_x86_64=y"
         frags="${FRAGMENT}"

@@ -169,10 +169,10 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
 
     # Probe with <errno.h>: it reaches asm/errno.h, so this catches a host that
     # can link a bare -m32 binary but has no i386 kernel headers — which is the
-    # usual state after installing only gcc-multilib.
+    # usual state after installing a 32-bit libc without them.
     if [ -n "${mflag}" ] && \
        ! printf '#include <errno.h>\nint main(){return 0;}\n' | ${CXX} ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
-        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — see tests/install.sh (gcc-multilib/g++-multilib + linux-libc-dev:i386)"
+        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — run tests/install.sh --with-32bit (libc6-dev-i386 + lib32stdc++ + linux-libc-dev:i386)"
         VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
     fi
 
