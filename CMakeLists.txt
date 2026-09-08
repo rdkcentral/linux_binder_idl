@@ -110,7 +110,13 @@ find_package(PkgConfig)
 
 # Build the host AIDL compiler (x86_64 or native host)
 # This is the "aidl compiler / aidl generator" host tool.
-option(BUILD_HOST_AIDL "Build host AIDL compiler (aidl / aidl-cpp)" ON)
+#
+# OFF by default: the host tool is an offline architecture-team tool, and no
+# production build consumes it — a released snapshot compiles committed,
+# pre-generated C++. Building it costs a host toolchain plus flex/bison for
+# output the same build then does not use. build-aidl-generator-tool.sh turns
+# it on when the tool is what you want.
+option(BUILD_HOST_AIDL "Build host AIDL compiler (aidl / aidl-cpp)" OFF)
 
 # Future option (Option 4): build a target AIDL compiler as well.
 # The idea is: same sources, but built for a target architecture and

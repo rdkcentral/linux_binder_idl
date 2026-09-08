@@ -28,6 +28,7 @@ set -euo pipefail
 #   1.1   Clone Android sources
 #   2     Scripts exist and are executable
 #   2.5   Default CMake flags validation
+#   2.6   Protocol / bitness switch matrix
 #   3     Help flags work
 #   4     Clean operations
 #   5     Build host AIDL tools
@@ -129,7 +130,7 @@ check_warnings_errors() {
 # Test ID management and CLI
 ###########################################################
 
-TEST_IDS=("1" "1.1" "2" "2.5" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12")
+TEST_IDS=("1" "1.1" "2" "2.5" "2.6" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12")
 
 list_tests() {
     echo "Available tests:"
@@ -137,6 +138,7 @@ list_tests() {
     echo "  1.1   Clone Android sources"
     echo "  2     Scripts exist and are executable"
     echo "  2.5   Default CMake flags validation"
+    echo "  2.6   Protocol / bitness switch matrix"
     echo "  3     Help flags work"
     echo "  4     Clean operations work and exit"
     echo "  5     Build host AIDL tools"
@@ -416,16 +418,104 @@ test_2_5() {
             print_fail "Default CMAKE_BUILD_TYPE is not Release"
         fi
 
-        if grep -q "^BUILD_HOST_AIDL:BOOL=ON$" ./build-default-cmake/CMakeCache.txt; then
-            print_pass "Default BUILD_HOST_AIDL is ON"
+        # OFF by default: a production build takes the target runtime libraries
+        # only, and never pays for the host AIDL compiler it does not use.
+        if grep -q "^BUILD_HOST_AIDL:BOOL=OFF$" ./build-default-cmake/CMakeCache.txt; then
+            print_pass "Default BUILD_HOST_AIDL is OFF"
         else
-            print_fail "Default BUILD_HOST_AIDL is not ON"
+            print_fail "Default BUILD_HOST_AIDL is not OFF"
         fi
     else
         print_fail "Default CMake configure failed"
         tail -20 /tmp/default_config.log | tee -a "${TEST_LOG}"
     fi
     rm -rf ./build-default-cmake 2>/dev/null || true
+}
+
+# Configure only, into a scratch dir, with the given switches.
+probe_switches() {
+    local dir="$1"
+    shift
+    rm -rf "${dir}" 2>/dev/null || true
+    cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
+}
+
+# Assert on what configure resolved to rather than on cache entries: these
+# switches are plain variables, so -D leaves them typed UNINITIALIZED and the
+# defaulted case leaves no cache entry at all. The messages are the contract.
+configure_selected() {
+    grep -q "Building $1 binder library" /tmp/switch_config.log \
+        && grep -q "binder wire protocol: $2" /tmp/switch_config.log
+}
+
+# The three platform configurations of PROTOCOL.md, plus the combinations the
+# library refuses. Bitness follows the toolchain; the protocol follows the
+# kernel, so a build spec states both and never inherits one of them.
+test_2_6() {
+    echo "Validating the binder protocol / bitness switch matrix..."
+    local d=./build-switch-matrix
+
+    # Row C - 64-bit userspace, protocol 8. The native toolchain here is 64-bit.
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+        && configure_selected 64bit 8; then
+        print_pass "Row C (LIB64 + IPC32=OFF) configures at protocol 8"
+    else
+        print_fail "Row C (LIB64 + IPC32=OFF) did not configure"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
+    # Protocol 7 carries 32-bit wire fields, which cannot hold a 64-bit pointer.
+    # The kernel option is `depends on !64BIT` for the same reason, so a 64-bit
+    # toolchain at protocol 7 is refused rather than left to fail on the device.
+    if probe_switches "$d" -DBINDER_IPC_32BIT=ON; then
+        print_fail "IPC32=ON with a 64-bit toolchain configured, and must not"
+    else
+        print_pass "IPC32=ON with a 64-bit toolchain is refused at configure time"
+    fi
+
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=ON; then
+        print_fail "LIB64 + IPC32=ON configured, and must not"
+    else
+        print_pass "LIB64 + IPC32=ON is refused at configure time"
+    fi
+
+    # Rows A and B are 32-bit userspace, so they need a working -m32 toolchain.
+    if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null; then
+        rm -f /tmp/binder_m32_probe
+        local m32=(-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32)
+
+        # Row A - legacy all-32-bit: a 32-bit kernel at 4.17 or older with
+        # CONFIG_ANDROID_BINDER_IPC_32BIT=y.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON \
+            && configure_selected 32bit 7; then
+            print_pass "Row A (LIB32 + IPC32=ON) configures at protocol 7"
+        else
+            print_fail "Row A (LIB32 + IPC32=ON) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # Row B - 32-bit userspace on a protocol-8 kernel: every 32-bit kernel
+        # from 4.18, and 32-bit middleware on any 64-bit kernel.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+            && configure_selected 32bit 8; then
+            print_pass "Row B (LIB32 + IPC32=OFF) configures at protocol 8"
+        else
+            print_fail "Row B (LIB32 + IPC32=OFF) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # Why row B has to state the switch: left to itself a 32-bit toolchain
+        # resolves to protocol 7, which is wrong on every protocol-8 kernel.
+        if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 7; then
+            print_pass "A 32-bit toolchain defaults to protocol 7 - row B must state IPC32=OFF"
+        else
+            print_fail "A 32-bit toolchain no longer defaults to protocol 7; row B guidance is stale"
+        fi
+    else
+        print_info "No -m32 toolchain - skipping rows A and B (32-bit userspace)"
+    fi
+
+    rm -rf "$d" 2>/dev/null || true
 }
 
 test_3() {
@@ -720,6 +810,7 @@ run_test "1" "Clean Android sources" test_1
 run_test "1.1" "Clone Android sources" test_1_1
 run_test "2" "Scripts exist and are executable" test_2
 run_test "2.5" "Default CMake flags validation" test_2_5
+run_test "2.6" "Protocol / bitness switch matrix" test_2_6
 run_test "3" "Help flags work" test_3
 run_test "4" "Clean operations work and exit" test_4
 run_test "5" "Build host AIDL tools" test_5
