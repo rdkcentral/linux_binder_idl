@@ -221,11 +221,28 @@ it resolves to is one of exactly three configurations. Bitness is a property of
 the role; the wire protocol is a property of the platform — there is one kernel,
 so it serves one protocol, and every role on the device speaks that one.
 
-| | Target | Switches |
+| | The kernel it matches | Switches |
 | --- | ------ | -------- |
-| **A** — legacy all-32-bit | 32-bit kernel ≤ 4.17 with `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
-| **B** — 32-bit userspace on a protocol-8 kernel | any 32-bit kernel ≥ 4.18, and 32-bit middleware on a 64-bit kernel | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
-| **C** — 64-bit userspace | any protocol-8 kernel | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
+| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **C** — 64-bit userspace | any 64-bit kernel | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+
+**The kernel version does not decide the row — its config does.** Being 32-bit
+at 4.17 or older is what makes protocol 7 *possible*; it is not what makes it
+apply. The derivation in the recipe above reads the resolved `.config` for
+exactly this reason, and there are three states to read, not two:
+
+| In the kernel config | Protocol | Row |
+| -------------------- | -------- | --- |
+| `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | 7 | A |
+| `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` | 8 | B |
+| the symbol absent entirely | 8 | B |
+
+The third state is common: a vendor BSP that backports a newer binder driver
+onto an older base drops the option altogether, so the symbol does not exist
+even on a 4.9 kernel. A 32-bit 4.9 platform is therefore as likely to be row B
+as row A, and only its config says which. Two devices on the same silicon and
+the same 4.9 kernel version can sit in different rows.
 
 **Row B is the one to get right.** A 32-bit toolchain resolves to protocol 7 on
 its own, so `-DBINDER_IPC_32BIT=OFF` is mandatory there and is never a default.
