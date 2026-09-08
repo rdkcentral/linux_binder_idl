@@ -284,7 +284,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 
 | Variable | Description | Default | Required? |
 |----------|-------------|---------|-----------|
-| `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `ON` | **Required** - Set to `OFF` for production |
+| `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `OFF` | Optional - already `OFF`; a production spec states it anyway |
 
 #### Architecture Selection (One Required)
 
@@ -391,12 +391,16 @@ cmake --install build-host
 
 #### Minimal Required Variables Summary
 
-For **production builds**, you MUST set these two variables:
+A **production build** states these three:
 
-1. `-DBUILD_HOST_AIDL=OFF` (exclude AIDL compiler - uses pre-generated C++ code)
-2. **One of:** `-DTARGET_LIB64_VERSION=ON` **or** `-DTARGET_LIB32_VERSION=ON`
-
-All other variables have sensible defaults and are optional.
+1. `-DBUILD_HOST_AIDL=OFF` (exclude the AIDL compiler - the build uses pre-generated C++ code).
+   This is already the default; a build spec states its switches rather than inheriting them.
+2. **One of:** `-DTARGET_LIB64_VERSION=ON` **or** `-DTARGET_LIB32_VERSION=ON` - the ELF class,
+   which follows the toolchain.
+3. `-DBINDER_IPC_32BIT=ON|OFF` - the wire protocol, which follows the **kernel**, not the
+   toolchain. It defaults from the toolchain, and on a 32-bit toolchain that default is protocol 7,
+   which is wrong on every protocol-8 kernel. See the row table above for which value your platform
+   takes, and derive it from the kernel's resolved `.config` where the recipe can.
 
 ### Manual/Development Build (Wrapper Scripts)
 
