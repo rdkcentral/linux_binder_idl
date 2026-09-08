@@ -88,6 +88,14 @@ given server:
 
 Both accessors are per-connection on the proxy and cached after first use.
 
+Consumers are not expected to call them directly. In `rdk-halif-aidl` these
+symbols are read by [`halcompat.h`](https://github.com/rdkcentral/rdk-halif-aidl/blob/develop/common/current/halcompat.h),
+the client-side helper that applies the era compatibility rules and keeps the
+version encoding away from client code — so what this generator emits as
+`VERSION` and `HASH` is what decides whether a client may talk to a given
+server. The rules themselves are in the
+[Versioning Guide](https://github.com/rdkcentral/rdk-halif-aidl/blob/develop/docs/standards/versioning-guide.md).
+
 ---
 
 ## Determinism
