@@ -102,21 +102,33 @@ target.
 
 | Target kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | Protocol served |
 | --- | --- | --- |
-| 32-bit, ≤ 4.17 | `=y` (**the default**) | **7** |
-| 32-bit, ≤ 4.17 | explicitly unset | **8** |
+| 32-bit, ≤ 4.17, stock Kconfig | `=y` (**the default**, and not settable) | **7** |
+| 32-bit, ≤ 4.17, Kconfig patched | symbol cleared or removed by a kernel change | **8** |
 | Any kernel ≥ 4.18 | option removed | **8** |
 | Any 64-bit kernel | cannot be set | **8** |
 
-**`default y` matters.** On a 32-bit kernel at 4.17 or older, protocol 7 is what the kernel serves
-unless someone turned the option off. It is the state such a kernel arrives in, not a choice
-somebody made.
+**`default y` matters, and the option is not user-configurable.** Upstream 4.9 declares it as a
+bare `bool` with **no prompt string**:
 
-That also means a legacy platform is not stuck there. Unsetting the option in its kernel config
-moves it to protocol 8 — row two above — on the same kernel version, with nothing else about the
-platform changing. Both sides must move together, because libbinder compares for exact equality,
-so it is a coordinated kernel and userspace change rather than a rolling one. A platform that
-makes that move has one protocol for its whole life, and every build on it takes
-`BINDER_IPC_32BIT=OFF`.
+```text
+config ANDROID_BINDER_IPC_32BIT
+	bool
+	depends on !64BIT && ANDROID_BINDER_IPC
+	default y
+```
+
+A symbol with no prompt cannot be set from a config. kconfig discards whatever a defconfig or
+fragment says about it and recomputes the value from `default y`, silently. So on a stock 32-bit
+kernel at 4.17 or older, protocol 7 is not a choice anyone made and not one a config can undo —
+adding `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` changes nothing, and the resolved `.config`
+still reads `=y`.
+
+Moving such a platform to protocol 8 therefore takes a **kernel source change**, not a config
+change: give the symbol a prompt so it can be cleared, change its default, or drop it — which is
+what a BSP does implicitly when it backports a newer binder driver onto the older base. Both sides
+then move together, because libbinder compares for exact equality, so it is a coordinated kernel
+and userspace change rather than a rolling one. A platform that makes that move has one protocol
+for its whole life, and every build on it takes `BINDER_IPC_32BIT=OFF`.
 
 Read the kernel's resolved `.config`, not its `defconfig`. The defconfig is an input: config
 fragments and Kconfig defaults can set or clear the symbol without it appearing there. In a Yocto
@@ -242,10 +254,14 @@ benchmark its own workload.
 
 For a 32-bit platform at 4.17 or older currently serving protocol 7:
 
-1. **Unset the option in every 32-bit defconfig for that platform** — both the ones that set it
-   explicitly and the ones that say nothing and inherit `default y`. The line to add is
-   `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set`.
-2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig.
+1. **Change the kernel, not the defconfig.** The symbol is prompt-less on a stock 4.17-or-older
+   kernel, so `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` in a defconfig or fragment is
+   discarded and `default y` is recomputed. Patch `drivers/android/Kconfig` to give the symbol a
+   prompt, or to change its default, or take the newer binder driver — and remove any defconfig
+   line that sets it. A platform already carrying a patch that re-adds the option **with** a
+   prompt can clear it from the defconfig instead.
+2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig. This
+   step is what catches a defconfig edit that looked right and did nothing.
 3. **Rebuild everything on the platform that links libbinder** — servicemanager, middleware,
    vendor implementations — in the same drop. With the protocol derived from the kernel this needs
    no switch changes; the builds follow the kernel.
