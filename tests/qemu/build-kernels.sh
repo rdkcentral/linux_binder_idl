@@ -44,17 +44,14 @@ HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 OUT="${HERE}/kernels"
 FRAGMENT="${HERE}/kconfig/binder.fragment"
 IPC32_FRAGMENT="${HERE}/kconfig/binder-ipc32.fragment"
-IPC32OFF_FRAGMENT="${HERE}/kconfig/binder-ipc32-off.fragment"
 
 # Default matrix — one stable point release per minor across the supported
 # range (4.9 floor → 5.16), plus both 32-bit kernels at the 4.9 floor. Suffixes
 # select the guest and the protocol; without one the guest is x86_64 at
 # protocol 8.
-#   :ipc32  protocol 7 — i386 guest, binder-ipc32.fragment merged on top
-#   :i386   protocol 8 on a 32-bit kernel — i386 guest, binder-ipc32-off.fragment
-# 4.9 carries both because it is the one version where the same kernel can serve
-# either protocol, which is the pair seen in production on identical silicon.
-VERSIONS="${VERSIONS:-4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.10.205 5.15.148 5.16.20}"
+#   :ipc32  protocol 7 — i386 guest at 4.17 or older, binder-ipc32.fragment
+#   :i386   protocol 8 on a 32-bit kernel — i386 guest at 4.18 or newer
+VERSIONS="${VERSIONS:-4.9.337 4.9.337:ipc32 5.4.290 5.4.290:i386 5.10.205 5.15.148 5.16.20}"
 BR_VERSION="${BR_VERSION:-2024.02.9}"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -74,6 +71,16 @@ ipc32_supported() {
     major="${1%%.*}"; minor="${1#*.}"; minor="${minor%%.*}"
     case "${major}${minor}" in ''|*[!0-9]*) return 1 ;; esac
     [ "${major}" -eq 4 ] && [ "${minor}" -le 17 ]
+}
+
+# A 32-bit kernel serves protocol 8 only where the option is gone, i.e. 4.18 and
+# newer. It cannot be turned off on an older one: 4.9 declares the symbol as a
+# bare `bool` with no prompt string, so it is not user-configurable — kconfig
+# discards a "# CONFIG_ANDROID_BINDER_IPC_32BIT is not set" line from a fragment
+# and recomputes `default y`. Moving a legacy 32-bit platform to protocol 8 takes
+# a kernel patch, not a config change.
+guest32_proto8_supported() {
+    ! ipc32_supported "$1"
 }
 
 # Buildroot needs a normal build toolchain + the usual fetchers.
@@ -118,12 +125,12 @@ for spec in ${VERSIONS}; do
     echo ""
     echo "=== kernel ${label} ==="
 
-    # Three kernels exist, and the guest arch is not a free choice in two of
-    # them. Protocol 7 only exists on a 32-bit kernel at 4.17 or older (see
-    # ipc32_supported above), so :ipc32 is i386. A 64-bit kernel can only serve
-    # protocol 8, so the plain spec is x86_64. :i386 is the third: a 32-bit
-    # kernel serving protocol 8, which needs the option turned OFF explicitly
-    # because on such a kernel it is `default y`.
+    # Three kernels exist, and the guest arch is not a free choice in any of
+    # them. Protocol 7 only exists on a 32-bit kernel at 4.17 or older, so
+    # :ipc32 is i386 and version-guarded. A 64-bit kernel can only serve
+    # protocol 8, so the plain spec is x86_64. :i386 is the third — a 32-bit
+    # kernel at protocol 8 — and is guarded the other way, because the option
+    # cannot be cleared on a kernel old enough to have it.
     if ${ipc32}; then
         if ! ipc32_supported "${ver}"; then
             echo "  FAIL  ${label}: :ipc32 needs a 4.9-4.17 kernel — CONFIG_ANDROID_BINDER_IPC_32BIT was removed in 4.18"
@@ -132,8 +139,12 @@ for spec in ${VERSIONS}; do
         arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
         frags="${FRAGMENT} ${IPC32_FRAGMENT}"
     elif ${guest32}; then
+        if ! guest32_proto8_supported "${ver}"; then
+            echo "  FAIL  ${label}: :i386 needs a 4.18+ kernel — on 4.17 and older CONFIG_ANDROID_BINDER_IPC_32BIT is a prompt-less 'default y' symbol that a config fragment cannot clear"
+            continue
+        fi
         arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
-        frags="${FRAGMENT} ${IPC32OFF_FRAGMENT}"
+        frags="${FRAGMENT}"
     else
         arch="x86_64"; br_arch="BR2_x86_64=y"
         frags="${FRAGMENT}"

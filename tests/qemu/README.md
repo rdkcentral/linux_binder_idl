@@ -56,17 +56,18 @@ There are exactly three kernels, and the matrix builds all three:
 | Variant | Guest | Kernel fragment | Userspace |
 | --- | --- | --- | --- |
 | protocol 8, 64-bit (default) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
-| protocol 8, 32-bit kernel | i386 | `+ kconfig/binder-ipc32-off.fragment` (append `:i386`) | `-DBINDER_IPC_32BIT=OFF`, compiled `-m32` |
+| protocol 8, 32-bit kernel | i386, kernel ≥ 4.18 | `kconfig/binder.fragment` (append `:i386`) | `-DBINDER_IPC_32BIT=OFF`, compiled `-m32` |
 | protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32`) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
 
 The middle row is the one most platforms run: a 32-bit userspace on a modern
-binder driver. It needs its own fragment because on a 32-bit kernel at 4.17 or
-older `CONFIG_ANDROID_BINDER_IPC_32BIT` is **`default y`**, so leaving it unset
-there yields protocol 7 — the plain fragment can leave it unset only because its
-other variants are 64-bit, where `depends on !64BIT` makes the symbol
-unavailable. 4.9 carries both 32-bit variants because it is the one version
-where the same kernel can serve either protocol, which is the pair seen in
-production on identical silicon.
+binder driver. It is guarded to **4.18 and newer**, because a 32-bit kernel
+older than that cannot be moved to protocol 8 by configuration at all: 4.9
+declares `CONFIG_ANDROID_BINDER_IPC_32BIT` as a bare `bool` with no prompt
+string, so kconfig discards a `# ... is not set` line from a fragment and
+recomputes `default y`. Getting protocol 8 there takes a kernel patch, which is
+outside what this harness builds. Asking for `:i386` on 4.17 or older is refused
+with that reason rather than silently producing a protocol-7 kernel labelled
+`-i386`.
 
 Protocol 7 is only reachable on a **32-bit kernel at 4.17 or older**: upstream
 declares `CONFIG_ANDROID_BINDER_IPC_32BIT` as `depends on !64BIT` and removed it
@@ -94,4 +95,3 @@ via `I<Iface>::asInterface(...)`, and assert a method result.
 | `guest-init.sh` | guest PID 1: provision binder device, run test, poweroff |
 | `kconfig/binder.fragment` | kernel binder config (protocol 8) |
 | `kconfig/binder-ipc32.fragment` | legacy protocol-7 (32-bit) overlay |
-| `kconfig/binder-ipc32-off.fragment` | protocol-8 overlay for a 32-bit kernel, where the option is `default y` |
