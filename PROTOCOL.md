@@ -283,17 +283,23 @@ protocol is decided per platform while the middleware's bitness stays fixed.
 | Platform | Kernel | MW | Vendor | Protocol | MW build | Vendor build |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `LIB32=ON` `IPC32=ON` | same as MW |
-| 32-bit kernel, option absent | 32-bit, ≥ 4.18 | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
+| 32-bit kernel at protocol 8 | 32-bit, option unset or absent — every kernel ≥ 4.18, and any older one whose config clears it | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
 | 64-bit kernel, 32-bit MW | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
 | All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `LIB64=ON` `IPC32=OFF` | same as MW |
 
-Three consequences worth stating plainly:
+Four consequences worth stating plainly:
 
 **A 32-bit middleware does not imply protocol 7.** Protocol 7 exists only on a 32-bit kernel at
 4.17 or older with the option set. On every other platform — including every 64-bit kernel — a
 32-bit middleware runs **protocol 8** over the kernel's compat path. Since a 32-bit toolchain
 defaults to protocol 7, `-DBINDER_IPC_32BIT=OFF` is the switch the middleware needs on most
 platforms, and it is never a default.
+
+**Nor does the kernel version imply it.** Being 32-bit at 4.17 or older is what makes protocol 7
+possible, not what makes it apply — the first two rows are the same kernel version with different
+configs. A vendor BSP that backports a newer binder driver onto an older base drops the option
+entirely, so a 32-bit 4.9 kernel lands in either row and only its resolved config says which. Two
+devices on the same silicon and the same kernel version can sit in different rows.
 
 **A protocol-7 platform is all-32-bit by necessity.** A 32-bit kernel cannot run 64-bit userspace,
 so the legacy row has no mixed variant.
