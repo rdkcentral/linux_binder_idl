@@ -105,6 +105,10 @@ trap cleanup EXIT
 # that share them.
 declare -A INITRAMFS_CACHE=()
 declare -A SKIPPED_VARIANT=()
+# Variants whose derivation is EXPECTED to disagree with the kernel. Not a
+# skip and not a failure: a checked assertion that the trap the docs describe
+# is real. See prepare_variant.
+declare -A EXPECTED_VARIANT=()
 
 # Read a field from a kernel's `variant` file, falling back for kernels built
 # before build-kernels.sh started writing one.
@@ -151,8 +155,9 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     local arch="$1" proto="$2" bb="$3" derive="${4:-}"
     local key="$1-p$2${derive:+-derived}"
-    VARIANT_INITRAMFS=""; VARIANT_SKIP=""
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
     if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    if [ -n "${EXPECTED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1; return 1; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
 
     local mflag="" lib32=OFF ipc32=OFF
@@ -211,6 +216,23 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         # not do.
         local got_proto
         got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
+
+        # A 32-bit toolchain cannot derive protocol 8, and no default can make
+        # it. The same i386 toolchain is correct at protocol 7 on a legacy
+        # kernel and wrong here, so bitness cannot select the protocol for both
+        # rows — which is exactly why row B has to state
+        # -DBINDER_IPC_32BIT=OFF. Assert that rather than report it as a build
+        # failure: it is the documented trap, and if it ever stops happening
+        # the guidance in PROTOCOL.md and BUILD.md has gone stale.
+        if [ "${arch}" = "i386" ] && [ "${proto}" = "8" ]; then
+            if [ "${got_proto}" = "7" ]; then
+                EXPECTED_VARIANT[${key}]="an i386 toolchain derived protocol 7 against a protocol-8 kernel, as documented — row B must state -DBINDER_IPC_32BIT=OFF"
+                VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
+                return 1
+            fi
+            fail "an i386 toolchain derived protocol ${got_proto:-<none reported>} against a protocol-8 kernel. It has always derived 7; if that default changed deliberately, the row B guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+        fi
+
         if [ "${got_proto}" != "${proto}" ]; then
             fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
         fi
@@ -276,7 +298,15 @@ for kimg in "${KERNELS_LIST[@]}"; do
     for mode in "" derive; do
         vlabel="${label}${mode:+ [derived]}"
         if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
-            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            if [ -n "${VARIANT_EXPECTED}" ]; then
+                # The derivation is wrong here by design, and proving it is the
+                # test. Booting it would only reproduce the mismatch the
+                # protocol-7-userspace negative case already covers.
+                echo "  PASS  ${vlabel}: ${VARIANT_SKIP}"; PASS=$((PASS+1))
+            else
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+            fi
+            continue
         fi
 
         log="${WORK}/qemu-${label}${mode:+-derived}.log"

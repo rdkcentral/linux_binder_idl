@@ -256,10 +256,12 @@ For a 32-bit platform at 4.17 or older currently serving protocol 7:
 
 1. **Change the kernel, not the defconfig.** The symbol is prompt-less on a stock 4.17-or-older
    kernel, so `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` in a defconfig or fragment is
-   discarded and `default y` is recomputed. Patch `drivers/android/Kconfig` to give the symbol a
-   prompt, or to change its default, or take the newer binder driver — and remove any defconfig
-   line that sets it. A platform already carrying a patch that re-adds the option **with** a
-   prompt can clear it from the defconfig instead.
+   discarded and `default y` is recomputed. Give the symbol a prompt so it becomes settable —
+   `tests/qemu/patches/linux-4.9-binder-ipc32-prompt.patch` is that one-line change, and keeps
+   `default y` so no existing configuration changes meaning — then add the "is not set" line,
+   which now takes effect. Taking the newer binder driver works too, since it drops the symbol
+   altogether. A platform already carrying a patch that re-adds the option **with** a prompt can
+   clear it from the defconfig directly.
 2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig. This
    step is what catches a defconfig edit that looked right and did nothing.
 3. **Rebuild everything on the platform that links libbinder** — servicemanager, middleware,
@@ -446,20 +448,34 @@ time rather than becoming a runtime failure.
 ## Verification
 
 `tests/qemu/run-qemu-test.sh` boots each kernel twice — once with both switches pinned, proving
-the protocols interoperate, and once with neither set, proving the build derives the right
-protocol from the toolchain on its own.
+the protocols interoperate, and once with neither set, exercising what the build derives from the
+toolchain alone.
 
 | Kernel | Arch | Protocol | Switches | Result |
 | --- | --- | --- | --- | --- |
 | 4.9.337-ipc32 | i386 | 7 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 4.9.337-ipc32 | i386 | 7 | derived | PASS — `servicemanager round-trip 41->42` |
+| 4.9.337-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 4.9.337-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 
 4.9 and 5.4 sit on opposite sides of the 4.18 boundary where the kernel option ceases to exist, so
-the pair establishes that protocol selection holds across it.
+the pair establishes that protocol selection holds across it. **4.9 appears at both protocols**,
+which is the point of carrying it twice: one kernel version serving 7 or 8 depending only on its
+Kconfig, which is the pair seen in production on identical silicon. The protocol-8 variant is built
+with `patches/linux-4.9-binder-ipc32-prompt.patch`, because a config alone cannot get there.
+
+**The derived rows for a 32-bit kernel at protocol 8 are assertions that derivation is wrong.** A
+32-bit toolchain resolves to protocol 7, and no default can fix that: the same toolchain is correct
+at protocol 7 on the legacy kernel and wrong here, so bitness cannot select the protocol for both.
+That is why row B states `-DBINDER_IPC_32BIT=OFF`. The harness asserts the mismatch rather than
+reporting it as a failure, and fails hard if a 32-bit toolchain ever derives 8 — because that would
+mean this guidance had gone stale.
 
 The negative cases are the point of the harness. A protocol-8 userspace against the protocol-7
 kernel fails, reproducing the field error verbatim in the guest console. And a protocol-7 variant

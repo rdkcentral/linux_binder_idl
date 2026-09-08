@@ -44,14 +44,19 @@ HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 OUT="${HERE}/kernels"
 FRAGMENT="${HERE}/kconfig/binder.fragment"
 IPC32_FRAGMENT="${HERE}/kconfig/binder-ipc32.fragment"
+IPC32OFF_FRAGMENT="${HERE}/kconfig/binder-ipc32-off.fragment"
+IPC32_PROMPT_PATCH="${HERE}/patches/linux-4.9-binder-ipc32-prompt.patch"
 
 # Default matrix — one stable point release per minor across the supported
 # range (4.9 floor → 5.16), plus both 32-bit kernels at the 4.9 floor. Suffixes
 # select the guest and the protocol; without one the guest is x86_64 at
 # protocol 8.
 #   :ipc32  protocol 7 — i386 guest at 4.17 or older, binder-ipc32.fragment
-#   :i386   protocol 8 on a 32-bit kernel — i386 guest at 4.18 or newer
-VERSIONS="${VERSIONS:-4.9.337 4.9.337:ipc32 5.4.290 5.4.290:i386 5.10.205 5.15.148 5.16.20}"
+#   :i386   protocol 8 on a 32-bit kernel — i386 guest. At 4.17 or older this
+#           also needs the Kconfig prompt patch (see guest32_needs_patch).
+# 4.9 carries both 32-bit variants: it is the version where one kernel can serve
+# either protocol, which is the pair seen in production on identical silicon.
+VERSIONS="${VERSIONS:-4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.4.290:i386 5.10.205 5.15.148 5.16.20}"
 BR_VERSION="${BR_VERSION:-2024.02.9}"
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -73,14 +78,14 @@ ipc32_supported() {
     [ "${major}" -eq 4 ] && [ "${minor}" -le 17 ]
 }
 
-# A 32-bit kernel serves protocol 8 only where the option is gone, i.e. 4.18 and
-# newer. It cannot be turned off on an older one: 4.9 declares the symbol as a
-# bare `bool` with no prompt string, so it is not user-configurable — kconfig
-# discards a "# CONFIG_ANDROID_BINDER_IPC_32BIT is not set" line from a fragment
-# and recomputes `default y`. Moving a legacy 32-bit platform to protocol 8 takes
-# a kernel patch, not a config change.
-guest32_proto8_supported() {
-    ! ipc32_supported "$1"
+# A 32-bit kernel at 4.17 or older needs a kernel patch to reach protocol 8, not
+# just a config: upstream declares the symbol as a bare `bool` with no prompt
+# string, so it is not user-configurable — kconfig discards a
+# "# CONFIG_ANDROID_BINDER_IPC_32BIT is not set" line and recomputes `default y`.
+# patches/linux-4.9-binder-ipc32-prompt.patch adds the prompt that makes the
+# fragment take effect. From 4.18 the symbol is gone and neither is needed.
+guest32_needs_patch() {
+    ipc32_supported "$1"
 }
 
 # Buildroot needs a normal build toolchain + the usual fetchers.
@@ -119,6 +124,7 @@ for spec in ${VERSIONS}; do
     elif ${guest32}; then  label="${ver}-i386"
     else                   label="${ver}"
     fi
+    kpatch_line=""
     o="${BUILDROOT}/output-${label}"
     dest="${OUT}/${label}"
 
@@ -139,12 +145,16 @@ for spec in ${VERSIONS}; do
         arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
         frags="${FRAGMENT} ${IPC32_FRAGMENT}"
     elif ${guest32}; then
-        if ! guest32_proto8_supported "${ver}"; then
-            echo "  FAIL  ${label}: :i386 needs a 4.18+ kernel — on 4.17 and older CONFIG_ANDROID_BINDER_IPC_32BIT is a prompt-less 'default y' symbol that a config fragment cannot clear"
-            continue
-        fi
         arch="i386"; br_arch="BR2_i386=y"$'\n'"BR2_x86_i686=y"
-        frags="${FRAGMENT}"
+        if guest32_needs_patch "${ver}"; then
+            frags="${FRAGMENT} ${IPC32OFF_FRAGMENT}"
+            # Build the whole line here: a defconfig string value must be
+            # quoted, and quotes written inside a ${x:+...} expansion are eaten
+            # by the heredoc, which silently yields a line Buildroot ignores.
+            kpatch_line="BR2_LINUX_KERNEL_PATCH=\"${IPC32_PROMPT_PATCH}\""
+        else
+            frags="${FRAGMENT}"
+        fi
     else
         arch="x86_64"; br_arch="BR2_x86_64=y"
         frags="${FRAGMENT}"
@@ -166,6 +176,7 @@ BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="${ver}"
 BR2_LINUX_KERNEL_DEFCONFIG="${arch}"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="${frags}"
 BR2_LINUX_KERNEL_BZIMAGE=y
+${kpatch_line}
 EOF
     if ! br_make O="${o}" defconfig BR2_DEFCONFIG="${o}.config" >/dev/null 2>&1; then
         echo "  FAIL  ${label}: buildroot defconfig failed"; continue
