@@ -49,18 +49,31 @@ them. It **skips cleanly** (not a failure) when QEMU, busybox, a compiler, a
 ## Matrix
 
 `build-kernels.sh` default versions span the supported range (4.9 floor → 5.16),
-one stable point release per minor, plus the legacy protocol-7 variant.
+one stable point release per minor, plus both 32-bit kernels at the 4.9 floor.
+
+There are exactly three kernels, and the matrix builds all three:
 
 | Variant | Guest | Kernel fragment | Userspace |
 | --- | --- | --- | --- |
-| protocol 8 (default, mixed 32/64) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
-| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32` to a version) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
+| protocol 8, 64-bit (default) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
+| protocol 8, 32-bit kernel | i386 | `+ kconfig/binder-ipc32-off.fragment` (append `:i386`) | `-DBINDER_IPC_32BIT=OFF`, compiled `-m32` |
+| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32`) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
+
+The middle row is the one most platforms run: a 32-bit userspace on a modern
+binder driver. It needs its own fragment because on a 32-bit kernel at 4.17 or
+older `CONFIG_ANDROID_BINDER_IPC_32BIT` is **`default y`**, so leaving it unset
+there yields protocol 7 — the plain fragment can leave it unset only because its
+other variants are 64-bit, where `depends on !64BIT` makes the symbol
+unavailable. 4.9 carries both 32-bit variants because it is the one version
+where the same kernel can serve either protocol, which is the pair seen in
+production on identical silicon.
 
 Protocol 7 is only reachable on a **32-bit kernel at 4.17 or older**: upstream
 declares `CONFIG_ANDROID_BINDER_IPC_32BIT` as `depends on !64BIT` and removed it
 in 4.18. `build-kernels.sh` therefore builds `:ipc32` variants as an i386 guest,
 rejects `:ipc32` on 4.18+, and verifies the option survived the config merge
-before accepting the kernel. Each kernel directory carries a `variant` file
+before accepting the kernel — and equally refuses a protocol-8 variant whose
+config came out with the option set. Each kernel directory carries a `variant` file
 (`arch=`, `protocol=`) that the runner uses to pick the QEMU binary and the
 matching userspace.
 
@@ -81,3 +94,4 @@ via `I<Iface>::asInterface(...)`, and assert a method result.
 | `guest-init.sh` | guest PID 1: provision binder device, run test, poweroff |
 | `kconfig/binder.fragment` | kernel binder config (protocol 8) |
 | `kconfig/binder-ipc32.fragment` | legacy protocol-7 (32-bit) overlay |
+| `kconfig/binder-ipc32-off.fragment` | protocol-8 overlay for a 32-bit kernel, where the option is `default y` |
