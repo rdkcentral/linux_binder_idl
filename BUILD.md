@@ -214,6 +214,32 @@ FILES_${PN} += "${libdir}/lib*.so*"
 FILES_${PN}-dev += "${includedir}/*"
 ```
 
+### Which row is your platform?
+
+The recipe above derives both switches, so it needs no per-platform override. What
+it resolves to is one of exactly three configurations. Bitness is a property of
+the role; the wire protocol is a property of the platform — there is one kernel,
+so it serves one protocol, and every role on the device speaks that one.
+
+| | Target | Switches |
+| --- | ------ | -------- |
+| **A** — legacy all-32-bit | 32-bit kernel ≤ 4.17 with `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
+| **B** — 32-bit userspace on a protocol-8 kernel | any 32-bit kernel ≥ 4.18, and 32-bit middleware on a 64-bit kernel | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **C** — 64-bit userspace | any protocol-8 kernel | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+
+**Row B is the one to get right.** A 32-bit toolchain resolves to protocol 7 on
+its own, so `-DBINDER_IPC_32BIT=OFF` is mandatory there and is never a default.
+Protocol 8 carries 64-bit wire *fields*, which a 32-bit process fills by
+zero-extension — it is the mixed-capable protocol, not the 64-bit protocol.
+
+**On a 64-bit kernel two SDKs ship** — a 32-bit one for the middleware and a
+64-bit one for the vendor: different ELF classes, both protocol 8, because both
+talk to the same kernel.
+
+A protocol mismatch is not caught at build time. It surfaces on the device, where
+every binder process terminates at startup. [`PROTOCOL.md`](PROTOCOL.md) carries
+the full matrix, the kernel-version derivation and the verification steps.
+
 **Key Points:**
 
 - **The protocol is derived, not declared**: reading the kernel's resolved `.config` cannot drift from
@@ -221,7 +247,9 @@ FILES_${PN}-dev += "${includedir}/*"
   kernel in scope, and the build fails if the two disagree
 - **`SITEINFO_BITS`, not `TUNE_FEATURES`**: it is the target's word size directly, so it covers every
   64-bit architecture rather than matching on one of them, and it is multilib-aware
-- **Production builds**: Only build target runtime libraries (`BUILD_HOST_AIDL=OFF`, SDK built by default)
+- **Production builds**: Only build target runtime libraries. `BUILD_HOST_AIDL` is `OFF` by default,
+  so a recipe gets the production path without asking for it; the line above states it anyway,
+  because a build spec states its switches
 - **No AIDL compiler needed**: Architecture team generates C++ code offline using AIDL compiler
 - **Pre-generated code committed**: All AIDL-generated C++ files are in source control
 - **No code generation at build time**: Production builds compile pre-generated C++ only
