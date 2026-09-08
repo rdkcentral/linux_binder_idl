@@ -351,6 +351,19 @@ In Yocto, set `prefix`/`libdir`/`includedir`/`bindir` in the recipe rather than
 overriding `CMAKE_INSTALL_PREFIX` through `EXTRA_OECMAKE`, since `cmake.bbclass`
 pins it to `${prefix}`, and extend `FILES:${PN}` to cover the prefix.
 
+`cmake.bbclass` passes `CMAKE_INSTALL_LIBDIR` **relative** to the prefix, which
+is also what `GNUInstallDirs` produces. It is resolved against the prefix before
+being compared or recorded, so a relative value never reaches `DT_RUNPATH` —
+recorded verbatim it would be resolved by the loader against the process's
+working directory rather than the prefix.
+
+A separated prefix will trip Yocto's `useless-rpaths` QA check: the recorded
+`RUNPATH` equals the recipe's own `libdir`, and the check has no way to know the
+mount is off the loader's default search path. Add
+`INSANE_SKIP:${PN} += "useless-rpaths"` to a recipe installing to a separated
+prefix. A recipe installing to a stock prefix gets no `RUNPATH` and needs no
+skip.
+
 #### Complete CMake Invocation Examples (Yocto/Production)
 
 These examples show **direct CMake usage for production build systems** (Yocto/BitBake) targeting ARM embedded devices. For development/testing, use the wrapper scripts instead (see below).

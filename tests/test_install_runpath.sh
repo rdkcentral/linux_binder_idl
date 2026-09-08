@@ -98,6 +98,43 @@ if [ "${#std_rpaths[@]}" -ne 0 ]; then
 fi
 pass "#62: a prefix on the default search path records no install RPATH"
 
+# --- a prefix-relative libdir is resolved, not recorded verbatim -----------
+# GNUInstallDirs produces a relative CMAKE_INSTALL_LIBDIR, and OpenEmbedded's
+# cmake.bbclass passes it that way. Recorded verbatim it would reach DT_RUNPATH
+# as "lib", which the loader resolves against the process's working directory
+# rather than the prefix — so it must be resolved against the prefix first.
+configure "${WORK}/rel" -DCMAKE_INSTALL_PREFIX=/mw/usr -DCMAKE_INSTALL_LIBDIR:PATH=lib \
+    || fail "#62: configure with a relative libdir failed — see ${WORK}/rel.log"
+
+mapfile -t rel_rpaths < <(install_rpaths "${WORK}/rel")
+if [ "${#rel_rpaths[@]}" -eq 0 ]; then
+    fail "#62: no install RPATH recorded for a relative libdir under prefix /mw/usr"
+fi
+for rp in "${rel_rpaths[@]}"; do
+    case "${rp}" in
+        /*) ;;
+        *)  printf '    recorded: %s\n' "${rel_rpaths[@]}"
+            fail "#62: install RPATH '${rp}' is relative — the loader would resolve it against the working directory, not the prefix" ;;
+    esac
+done
+if [ "${#rel_rpaths[@]}" -ne 1 ] || [ "${rel_rpaths[0]}" != "/mw/usr/lib" ]; then
+    printf '    recorded: %s\n' "${rel_rpaths[@]}"
+    fail "#62: a relative libdir must resolve to /mw/usr/lib"
+fi
+pass "#62: a prefix-relative libdir resolves to an absolute install RPATH"
+
+# The same resolution decides the default-search-path guard: a relative libdir
+# under a stock prefix must still be recognised as needing no RUNPATH.
+configure "${WORK}/relstd" -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR:PATH=lib \
+    || fail "#62: configure with a relative libdir under /usr failed — see ${WORK}/relstd.log"
+
+mapfile -t relstd_rpaths < <(install_rpaths "${WORK}/relstd")
+if [ "${#relstd_rpaths[@]}" -ne 0 ]; then
+    printf '    recorded: %s\n' "${relstd_rpaths[@]}"
+    fail "#62: a relative libdir under /usr resolves to /usr/lib, which is on the default search path and must get no RUNPATH"
+fi
+pass "#62: a relative libdir under a stock prefix records no install RPATH"
+
 # --- the opt-out works -----------------------------------------------------
 configure "${WORK}/off" -DCMAKE_INSTALL_PREFIX=/mw/usr -DBINDER_INSTALL_RUNPATH=OFF \
     || fail "#62: configure with BINDER_INSTALL_RUNPATH=OFF failed — see ${WORK}/off.log"

@@ -53,8 +53,15 @@
 # needed to select the linker flag. Repeat calls are no-ops, so a file that is
 # both included and used standalone may call it unconditionally.
 #
+# CMAKE_INSTALL_LIBDIR may be given relative to the prefix -- that is what
+# GNUInstallDirs produces and what OpenEmbedded's cmake.bbclass passes -- so it
+# is resolved against CMAKE_INSTALL_PREFIX before being compared or recorded. A
+# relative value reaching DT_RUNPATH would be resolved by the loader against the
+# process's working directory rather than the prefix.
+#
 # Variables read:
-#   CMAKE_INSTALL_LIBDIR     the prefix's library directory (the RUNPATH value)
+#   CMAKE_INSTALL_LIBDIR     the prefix's library directory, absolute or
+#                            relative to CMAKE_INSTALL_PREFIX (the RUNPATH value)
 #   BINDER_INSTALL_RUNPATH   ON (default) to emit RUNPATH, OFF to suppress it
 #
 # Variables set, in the caller's directory scope:
@@ -82,6 +89,16 @@ macro(binder_install_runpath)
             /usr/local/lib /usr/local/lib32 /usr/local/lib64
         )
 
+        # Resolve a prefix-relative libdir, so the comparison below sees the
+        # same form as the list and a relative value never reaches DT_RUNPATH.
+        if (DEFINED CMAKE_INSTALL_LIBDIR)
+            if (IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
+                set(_binder_libdir "${CMAKE_INSTALL_LIBDIR}")
+            else ()
+                set(_binder_libdir "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+            endif ()
+        endif ()
+
         if (NOT BINDER_INSTALL_RUNPATH)
             message("install RUNPATH: disabled (BINDER_INSTALL_RUNPATH=OFF)")
         elseif (NOT DEFINED CMAKE_INSTALL_LIBDIR)
@@ -89,11 +106,11 @@ macro(binder_install_runpath)
                 "BINDER_INSTALL_RUNPATH is ON but CMAKE_INSTALL_LIBDIR is not "
                 "set, so there is no prefix to record. Set CMAKE_INSTALL_LIBDIR "
                 "(or CMAKE_INSTALL_PREFIX) before calling binder_install_runpath().")
-        elseif ("${CMAKE_INSTALL_LIBDIR}" IN_LIST _binder_loader_default_libdirs)
-            message("install RUNPATH: not needed — ${CMAKE_INSTALL_LIBDIR} is on "
+        elseif ("${_binder_libdir}" IN_LIST _binder_loader_default_libdirs)
+            message("install RUNPATH: not needed — ${_binder_libdir} is on "
                     "the loader's default search path")
         else ()
-            set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_LIBDIR}")
+            set(CMAKE_INSTALL_RPATH "${_binder_libdir}")
 
             # Record only the prefix. The link line's directories belong to the
             # build tree and must not reach the installed artifact.
