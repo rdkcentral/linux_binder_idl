@@ -244,8 +244,9 @@ even on a 4.9 kernel. A 32-bit 4.9 platform is therefore as likely to be row B
 as row A, and only its config says which. Two devices on the same silicon and
 the same 4.9 kernel version can sit in different rows.
 
-**Row B is the one to get right.** A 32-bit toolchain resolves to protocol 7 on
-its own, so `-DBINDER_IPC_32BIT=OFF` is mandatory there and is never a default.
+**Row A is the one that must state its switch.** Protocol 8 is the default on
+every toolchain, so rows B and C are what a build inherits without asking. A
+legacy platform is the exception and passes `-DBINDER_IPC_32BIT=ON` explicitly.
 Protocol 8 carries 64-bit wire *fields*, which a 32-bit process fills by
 zero-extension — it is the mixed-capable protocol, not the 64-bit protocol.
 
@@ -318,7 +319,7 @@ Both defaults are read from the compiler's pointer size, so an unqualified build
 BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
 ```
 
-**32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is the 32-bit toolchain with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path. This is the one case the default gets wrong for you: a 32-bit toolchain defaults to protocol 7, so pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
+**32-bit userspace on a 64-bit kernel** — the recommended configuration on a 64-bit platform — is the 32-bit toolchain at protocol 8, which is the default. The 64-bit kernel handles syscall translation over the compat path. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
 
 #### Installation Paths (All Optional)
 

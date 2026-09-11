@@ -479,6 +479,15 @@ test_2_6() {
         print_pass "LIB64 + IPC32=ON is refused at configure time"
     fi
 
+    # The same default on the native 64-bit toolchain, so #72 is pinned on both
+    # and not only where it changed.
+    if probe_switches "$d" && configure_selected 64bit 8; then
+        print_pass "A 64-bit toolchain defaults to protocol 8"
+    else
+        print_fail "A 64-bit toolchain does not default to protocol 8"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
     # Rows A and B are 32-bit userspace, so they need a working -m32 toolchain.
     if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null; then
         rm -f /tmp/binder_m32_probe
@@ -504,12 +513,14 @@ test_2_6() {
             tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
         fi
 
-        # Why row B has to state the switch: left to itself a 32-bit toolchain
-        # resolves to protocol 7, which is wrong on every protocol-8 kernel.
-        if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 7; then
-            print_pass "A 32-bit toolchain defaults to protocol 7 - row B must state IPC32=OFF"
+        # Protocol 8 is the default on every toolchain (#72). Bitness cannot
+        # select the protocol, so a toolchain-derived default had to be wrong
+        # somewhere; defaulting to 8 puts the silent answer where every
+        # supported platform already is, and leaves row A to state ON.
+        if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 8; then
+            print_pass "A 32-bit toolchain defaults to protocol 8 - the protocol, on every toolchain"
         else
-            print_fail "A 32-bit toolchain no longer defaults to protocol 7; row B guidance is stale"
+            print_fail "A 32-bit toolchain no longer defaults to protocol 8; a legacy platform would now inherit the wrong protocol and the row A guidance is stale"
         fi
     else
         print_info "No -m32 toolchain - skipping rows A and B (32-bit userspace)"

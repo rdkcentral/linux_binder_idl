@@ -338,9 +338,9 @@ Four consequences worth stating plainly:
 
 **A 32-bit middleware does not imply protocol 7.** Protocol 7 exists only on a 32-bit kernel at
 4.17 or older with the option set. On every other platform — including every 64-bit kernel — a
-32-bit middleware runs **protocol 8** over the kernel's compat path. Since a 32-bit toolchain
-defaults to protocol 7, `-DBINDER_IPC_32BIT=OFF` is the switch the middleware needs on most
-platforms, and it is never a default.
+32-bit middleware runs **protocol 8** over the kernel's compat path. Protocol 8 is the default on
+every toolchain, so a middleware build inherits the right protocol everywhere except the legacy
+platform, which states `-DBINDER_IPC_32BIT=ON` instead.
 
 **Nor does the kernel version imply it.** Being 32-bit at 4.17 or older is what makes protocol 7
 possible, not what makes it apply — the first two rows are the same kernel version with different
@@ -379,8 +379,9 @@ speaks to the driver.
 | **B** — Mixed, 32-bit MW | 32-bit userspace on a protocol-8 kernel | 32-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
 | **C** — All-64-bit | any protocol-8 kernel | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
 
-Row **B** is the one to watch: a 32-bit toolchain resolves to protocol 7 on its own, so
-`-DBINDER_IPC_32BIT=OFF` is mandatory there and is never a default. Bitness follows userspace;
+Row **A** is the one that must state its switch. Protocol 8 is the default on every toolchain, so
+rows B and C are what a build inherits without asking, and only the legacy platform overrides it.
+Bitness follows userspace;
 the protocol follows the kernel.
 
 State all three switches explicitly in a build spec rather than relying on defaults. The defaults
@@ -483,14 +484,14 @@ toolchain alone.
 | Kernel | Arch | Protocol | Switches | Result |
 | --- | --- | --- | --- | --- |
 | 4.9.337-ipc32 | i386 | 7 | explicit | PASS — `servicemanager round-trip 41->42` |
-| 4.9.337-ipc32 | i386 | 7 | derived | PASS — `servicemanager round-trip 41->42` |
+| 4.9.337-ipc32 | i386 | 7 | derived | PASS — derives 8, as documented |
 | 4.9.337-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
-| 4.9.337-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
+| 4.9.337-i386 | i386 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
-| 5.4.290-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
+| 5.4.290-i386 | i386 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
@@ -506,12 +507,13 @@ binder driver's compat path — a 32-bit process against a 64-bit kernel — whi
 from both native pairings. The userspace is the same `(i386, protocol 8)` build the 32-bit-kernel
 rows use, booted against a 64-bit kernel, so the pairing costs a boot rather than another build.
 
-**The derived rows for a 32-bit kernel at protocol 8 are assertions that derivation is wrong.** A
-32-bit toolchain resolves to protocol 7, and no default can fix that: the same toolchain is correct
-at protocol 7 on the legacy kernel and wrong here, so bitness cannot select the protocol for both.
-That is why row B states `-DBINDER_IPC_32BIT=OFF`. The harness asserts the mismatch rather than
-reporting it as a failure, and fails hard if a 32-bit toolchain ever derives 8 — because that would
-mean this guidance had gone stale.
+**The derived row on the protocol-7 kernel is an assertion that derivation is wrong there.**
+Protocol 8 is the default on every toolchain, so derivation cannot reach protocol 7 — which is
+deliberate: bitness cannot select the protocol, so a derived default has to be wrong somewhere, and
+the rare, shrinking case is the one that should have to state its switch. Every other derived row
+now simply passes. The harness asserts the legacy mismatch rather than reporting it as a failure,
+and fails hard if derivation ever reaches protocol 7 on its own, because that would mean this
+guidance had gone stale.
 
 The negative cases are the point of the harness. A protocol-8 userspace against the protocol-7
 kernel fails, reproducing the field error verbatim in the guest console. And a protocol-7 variant

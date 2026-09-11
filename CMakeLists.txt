@@ -219,24 +219,25 @@ if (TARGET_LIB64_VERSION)
     set(TARGET_LIB32_VERSION OFF)
 endif ()
 
-# Binder wire protocol vs compile bitness (linux_binder_idl#42).
+# Binder wire protocol vs compile bitness (linux_binder_idl#42, #72).
 # The binder protocol version is a DIFFERENT axis from the ELF compile bitness:
-#   - protocol 7 (BINDER_IPC_32BIT=1, 32-bit binder handles) — legacy, for an
-#     all-32-bit userspace on a CONFIG_ANDROID_BINDER_IPC_32BIT kernel.
-#   - protocol 8 (unset, 64-bit handles) — required for a MIXED platform (32-bit
-#     MW + 64-bit vendor sharing one kernel); a 32-bit process CAN run protocol 8.
-# Default: follow the TOOLCHAIN, not TARGET_LIB32_VERSION. The declaration adds
-# no -m32 and can disagree with the compiler it is given; deriving protocol 7
-# from it meant `-DTARGET_LIB32_VERSION=ON` with a 64-bit compiler selected a
-# protocol nobody asked for and the guard below then rejected the build. The
-# toolchain cannot disagree with itself. Override with -DBINDER_IPC_32BIT=OFF to
-# build a 32-bit protocol-8 library (the mixed config); an explicit value wins.
+#   - protocol 8 (unset, 64-bit handles) — the protocol. Every 64-bit kernel
+#     serves it, every kernel from 4.18 serves it, and a 32-bit userspace runs
+#     it perfectly well: it needs 64-bit FIELDS, not a 64-bit anything.
+#   - protocol 7 (BINDER_IPC_32BIT=1, 32-bit handles) — legacy compatibility,
+#     reachable only on a 32-bit kernel at 4.17 or older whose Kconfig still
+#     carries CONFIG_ANDROID_BINDER_IPC_32BIT.
+#
+# Default: protocol 8, on every toolchain. Bitness cannot select the protocol —
+# the same 32-bit toolchain is correct at protocol 7 on a legacy kernel and
+# wrong at it everywhere else — so a toolchain-derived default is a guess that
+# has to be wrong somewhere. Defaulting to 8 puts the silent answer where every
+# supported platform already is, and leaves the build that must state its switch
+# as the legacy one. A platform still on protocol 7 passes -DBINDER_IPC_32BIT=ON
+# explicitly; better still, derive it from the kernel's resolved .config, which
+# cannot be wrong either way (see BUILD.md).
 if (NOT DEFINED BINDER_IPC_32BIT)
-    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
-        set(BINDER_IPC_32BIT ON)
-    else ()
-        set(BINDER_IPC_32BIT OFF)
-    endif ()
+    set(BINDER_IPC_32BIT OFF)
 endif ()
 # Check the TOOLCHAIN first. TARGET_LIB32_VERSION adds no -m32 — the ELF class
 # comes from CC/CXX alone — so a declaration can disagree with the compiler it is
