@@ -28,6 +28,7 @@ set -euo pipefail
 #   1.1   Clone Android sources
 #   2     Scripts exist and are executable
 #   2.5   Default CMake flags validation
+#   2.6   Protocol / bitness switch matrix
 #   3     Help flags work
 #   4     Clean operations
 #   5     Build host AIDL tools
@@ -38,6 +39,12 @@ set -euo pipefail
 #   10    Production build (minimal flags + install)
 #   11    SC Docker cross-compilation (RDK Kirkstone ARM)
 #   12    Incremental build
+#   13    Component test suite (tests/run-tests.sh)
+#   14    QEMU kernel matrix
+#
+# Everything runs by default, including the kernel matrix. --no-qemu and
+# --no-suite opt out; nothing opts in, because a suite whose important parts
+# are opt-in gets run without them.
 ###########################################################
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -69,6 +76,8 @@ usage() {
     echo "  --from ID    Start running at test ID (e.g., 3 or 6)"
     echo "  --to ID      Stop after test ID (inclusive)"
     echo "  --only IDs   Run only specified test IDs (comma-separated)"
+    echo "  --no-qemu    Skip the QEMU kernel matrix (test 14)"
+    echo "  --no-suite   Skip the component test suite (test 13)"
     echo "  --list       List available test IDs"
     echo "  --help       Show this help"
 }
@@ -129,7 +138,7 @@ check_warnings_errors() {
 # Test ID management and CLI
 ###########################################################
 
-TEST_IDS=("1" "1.1" "2" "2.5" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12")
+TEST_IDS=("1" "1.1" "2" "2.5" "2.6" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12" "13" "14")
 
 list_tests() {
     echo "Available tests:"
@@ -137,6 +146,7 @@ list_tests() {
     echo "  1.1   Clone Android sources"
     echo "  2     Scripts exist and are executable"
     echo "  2.5   Default CMake flags validation"
+    echo "  2.6   Protocol / bitness switch matrix"
     echo "  3     Help flags work"
     echo "  4     Clean operations work and exit"
     echo "  5     Build host AIDL tools"
@@ -147,6 +157,8 @@ list_tests() {
     echo "  10    Production build (minimal flags + install)"
     echo "  11    SC Docker cross-compilation (RDK Kirkstone ARM toolchain)"
     echo "  12    Incremental build"
+    echo "  13    Component test suite (tests/run-tests.sh)"
+    echo "  14    QEMU kernel matrix (boots each kernel, real binder round-trip)"
 }
 
 index_of_test_id() {
@@ -289,6 +301,8 @@ check_install_layout() {
 START_INDEX=0
 END_INDEX=$((${#TEST_IDS[@]} - 1))
 ONLY_IDS=()
+SKIP_QEMU_MATRIX=0
+SKIP_COMPONENT_SUITE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -313,6 +327,12 @@ while [ $# -gt 0 ]; do
         --only)
             shift
             parse_only_ids "${1:-}"
+            ;;
+        --no-qemu)
+            SKIP_QEMU_MATRIX=1
+            ;;
+        --no-suite)
+            SKIP_COMPONENT_SUITE=1
             ;;
         --list)
             list_tests
@@ -416,16 +436,115 @@ test_2_5() {
             print_fail "Default CMAKE_BUILD_TYPE is not Release"
         fi
 
-        if grep -q "^BUILD_HOST_AIDL:BOOL=ON$" ./build-default-cmake/CMakeCache.txt; then
-            print_pass "Default BUILD_HOST_AIDL is ON"
+        # OFF by default: a production build takes the target runtime libraries
+        # only, and never pays for the host AIDL compiler it does not use.
+        if grep -q "^BUILD_HOST_AIDL:BOOL=OFF$" ./build-default-cmake/CMakeCache.txt; then
+            print_pass "Default BUILD_HOST_AIDL is OFF"
         else
-            print_fail "Default BUILD_HOST_AIDL is not ON"
+            print_fail "Default BUILD_HOST_AIDL is not OFF"
         fi
     else
         print_fail "Default CMake configure failed"
         tail -20 /tmp/default_config.log | tee -a "${TEST_LOG}"
     fi
     rm -rf ./build-default-cmake 2>/dev/null || true
+}
+
+# Configure only, into a scratch dir, with the given switches.
+probe_switches() {
+    local dir="$1"
+    shift
+    rm -rf "${dir}" 2>/dev/null || true
+    cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
+}
+
+# Assert on what configure resolved to rather than on cache entries: these
+# switches are plain variables, so -D leaves them typed UNINITIALIZED and the
+# defaulted case leaves no cache entry at all. The messages are the contract.
+configure_selected() {
+    grep -q "Building $1 binder library" /tmp/switch_config.log \
+        && grep -q "binder wire protocol: $2" /tmp/switch_config.log
+}
+
+# The three platform configurations of PROTOCOL.md, plus the combinations the
+# library refuses. Bitness follows the toolchain; the protocol follows the
+# kernel, so a build spec states both and never inherits one of them.
+test_2_6() {
+    echo "Validating the binder protocol / bitness switch matrix..."
+    local d=./build-switch-matrix
+
+    # Row C - 64-bit userspace, protocol 8. The native toolchain here is 64-bit.
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+        && configure_selected 64bit 8; then
+        print_pass "Row C (LIB64 + IPC32=OFF) configures at protocol 8"
+    else
+        print_fail "Row C (LIB64 + IPC32=OFF) did not configure"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
+    # Protocol 7 carries 32-bit wire fields, which cannot hold a 64-bit pointer.
+    # The kernel option is `depends on !64BIT` for the same reason, so a 64-bit
+    # toolchain at protocol 7 is refused rather than left to fail on the device.
+    if probe_switches "$d" -DBINDER_IPC_32BIT=ON; then
+        print_fail "IPC32=ON with a 64-bit toolchain configured, and must not"
+    else
+        print_pass "IPC32=ON with a 64-bit toolchain is refused at configure time"
+    fi
+
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=ON; then
+        print_fail "LIB64 + IPC32=ON configured, and must not"
+    else
+        print_pass "LIB64 + IPC32=ON is refused at configure time"
+    fi
+
+    # The same default on the native 64-bit toolchain, so #72 is pinned on both
+    # and not only where it changed.
+    if probe_switches "$d" && configure_selected 64bit 8; then
+        print_pass "A 64-bit toolchain defaults to protocol 8"
+    else
+        print_fail "A 64-bit toolchain does not default to protocol 8"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
+    # Rows A and B are 32-bit userspace, so they need a working -m32 toolchain.
+    if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null; then
+        rm -f /tmp/binder_m32_probe
+        local m32=(-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32)
+
+        # Row A - legacy all-32-bit: a 32-bit kernel at 4.17 or older with
+        # CONFIG_ANDROID_BINDER_IPC_32BIT=y.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON \
+            && configure_selected 32bit 7; then
+            print_pass "Row A (LIB32 + IPC32=ON) configures at protocol 7"
+        else
+            print_fail "Row A (LIB32 + IPC32=ON) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # Row B - 32-bit userspace on a protocol-8 kernel: every 32-bit kernel
+        # from 4.18, and 32-bit middleware on any 64-bit kernel.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+            && configure_selected 32bit 8; then
+            print_pass "Row B (LIB32 + IPC32=OFF) configures at protocol 8"
+        else
+            print_fail "Row B (LIB32 + IPC32=OFF) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # Protocol 8 is the default on every toolchain (#72). Bitness cannot
+        # select the protocol, so a toolchain-derived default had to be wrong
+        # somewhere; defaulting to 8 puts the silent answer where every
+        # supported platform already is, and leaves row A to state ON.
+        if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 8; then
+            print_pass "A 32-bit toolchain defaults to protocol 8 - the protocol, on every toolchain"
+        else
+            print_fail "A 32-bit toolchain no longer defaults to protocol 8; a legacy platform would now inherit the wrong protocol and the row A guidance is stale"
+        fi
+    else
+        print_info "No -m32 toolchain - skipping rows A and B (32-bit userspace)"
+    fi
+
+    rm -rf "$d" 2>/dev/null || true
 }
 
 test_3() {
@@ -632,6 +751,15 @@ test_11() {
         return 0
     fi
 
+    # The image has to be present locally. Without a registry login `sc docker
+    # run` can only use --local, so check for the image and say which it is
+    # rather than failing inside docker with a registry warning.
+    if ! sc docker list 2>/dev/null | grep -q "rdk-kirkstone"; then
+        print_info "rdk-kirkstone image not available locally - skipping cross-compilation test"
+        print_info "  pull it, or 'sc docker login' for a remote registry"
+        return 0
+    fi
+
     clean_build_state
     echo "Building with RDK Kirkstone ARM toolchain via sc docker..."
     echo "This tests cross-compilation with sysroot and ARM target flags."
@@ -639,7 +767,10 @@ test_11() {
     # Build in SC Docker with ARM toolchain environment.
     # Skip host AIDL tool build (no-host-aidl) — host tools must be built
     # natively outside Docker, not inside the cross-compilation environment.
-    if sc docker run rdk-kirkstone \
+    # --local: without a registry login `sc docker run` can only use a local
+    # image, and omitting it fails with a registry warning rather than a build
+    # error. rdk-halif-aidl's equivalent tests pass it for the same reason.
+    if sc docker run --local rdk-kirkstone \
         ". /opt/toolchains/rdk-glibc-x86_64-arm-toolchain/environment-setup-armv7vet2hf-neon-oe-linux-gnueabi && \
         export TARGET_LIB32_VERSION=ON && \
         ./build-linux-binder-aidl.sh no-host-aidl" \
@@ -712,6 +843,51 @@ test_12() {
     fi
 }
 
+test_13() {
+    if [ "${SKIP_COMPONENT_SUITE}" = "1" ]; then
+        print_info "skipped by --no-suite"
+        return 0
+    fi
+    echo "Running the component test suite (kernel matrix runs separately as test 14)..."
+    # SKIP_QEMU=1: test 14 owns the matrix, so that a missing kernel is a
+    # failure there rather than a silent skip here.
+    if SKIP_QEMU=1 ./tests/run-tests.sh; then
+        print_pass "component test suite"
+    else
+        print_fail "component test suite"
+    fi
+}
+
+test_14() {
+    if [ "${SKIP_QEMU_MATRIX}" = "1" ]; then
+        print_info "skipped by --no-qemu"
+        return 0
+    fi
+    echo "Booting the QEMU kernel matrix..."
+    local log=/tmp/qemu_matrix.log
+    ./tests/qemu/run-qemu-test.sh >"${log}" 2>&1
+    local rc=$?
+    sed -n 's/^  \(PASS\|FAIL\|SKIP\)  /  \1  /p' "${log}"
+
+    # A skip here is a FAILURE. The matrix is the only thing that proves the
+    # built library talks to a kernel, and it skips itself when the kernels are
+    # absent or qemu is not installed - so treating a skip as success would let
+    # a green run mean nothing was booted. --no-qemu is how you opt out on
+    # purpose; a missing prerequisite is not the same thing.
+    if grep -q '^  SKIP  qemu binder test' "${log}"; then
+        print_fail "QEMU matrix did not run: $(sed -n 's/^  SKIP  qemu binder test — //p' "${log}" | head -n 1)"
+        echo "         build the kernels with ./tests/qemu/build-kernels.sh,"
+        echo "         or pass --no-qemu to skip this deliberately."
+        return 0
+    fi
+    if [ "${rc}" -eq 0 ]; then
+        print_pass "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+    else
+        print_fail "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+        tail -20 "${log}" | sed 's/^/        /'
+    fi
+}
+
 ###########################################################
 # Run tests
 ###########################################################
@@ -720,6 +896,7 @@ run_test "1" "Clean Android sources" test_1
 run_test "1.1" "Clone Android sources" test_1_1
 run_test "2" "Scripts exist and are executable" test_2
 run_test "2.5" "Default CMake flags validation" test_2_5
+run_test "2.6" "Protocol / bitness switch matrix" test_2_6
 run_test "3" "Help flags work" test_3
 run_test "4" "Clean operations work and exit" test_4
 run_test "5" "Build host AIDL tools" test_5
@@ -730,6 +907,8 @@ run_test "9" "Direct CMake build (per BUILD.md + install)" test_9
 run_test "10" "Production build (minimal flags + install)" test_10
 run_test "11" "SC Docker cross-compilation (RDK Kirkstone ARM)" test_11
 run_test "12" "Incremental build" test_12
+run_test "13" "Component test suite (tests/run-tests.sh)" test_13
+run_test "14" "QEMU kernel matrix" test_14
 
 ###########################################################
 # Summary

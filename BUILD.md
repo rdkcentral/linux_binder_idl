@@ -122,7 +122,7 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain |
 
 ### Examples
 
@@ -159,28 +159,50 @@ export TARGET_LIB32_VERSION=ON
 
 **Production builds only require TARGET libraries** - the AIDL compiler is used offline by the architecture team (using `./build-aidl-generator-tool.sh` for convenience) to generate interface code, which is then committed to the repository.
 
-**BitBake Recipe Example:**
+**BitBake Recipe Example** — this is `example/yocto/linux-binder.bb`, kept
+in the repository so you can copy or diff it rather than retype it.
+`tests/test_yocto_recipe_example.sh` fails if this block and that file
+disagree, so the two cannot drift apart:
 
 ```bitbake
-inherit cmake siteinfo
+# files/ sits beside this recipe and holds the systemd unit. Without this a
+# layer that copies only the .bb fails during fetch, before anything builds.
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-# Production recipe - build binder runtime libraries only
-DEPENDS = ""
+SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_URI_SUFFIX}"
+SRC_URI += "file://servicemanager.service"
+
+# Pin to a released tag. A branch name or a feature-branch SHA makes the build
+# unreproducible and is not a supported configuration.
+PV ?= "2.6.0"
+SRCREV ?= "2.6.0"
+S = "${WORKDIR}/git"
+
+# libbinder provides liblog; do not also build liblog.bb.
+RPROVIDES:${PN}:append = " liblog"
+PROVIDES:append = " liblog"
+
+inherit cmake systemd siteinfo
 
 # The wire protocol belongs to the kernel, so the recipe needs the configured
 # kernel in scope to read it.
 do_configure[depends] += "virtual/kernel:do_shared_workdir"
 
-# Machine/distro override, for a build with no kernel in scope (an SDK, say).
-# Left empty the protocol is derived, which is what a device build should do.
+# Escape hatch for a build with no kernel in scope, an SDK for instance. Left
+# empty the protocol is derived, which is what a device build should do.
 BINDER_PROTOCOL ?= ""
 
-def binder_ipc32(d):
+def binder_protocol(d):
+    """Return the wire protocol this build must speak: '7' or '8'."""
     import os
     want = d.getVar('BINDER_PROTOCOL') or ''
     cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
     derived = ''
     if os.path.exists(cfg):
+        # Read the RESOLVED .config, never the defconfig. A defconfig may
+        # request a symbol the kernel's Kconfig no longer has, and the request
+        # is dropped silently - so a defconfig can claim protocol 7 while the
+        # kernel it produced serves protocol 8.
         derived = '8'
         with open(cfg) as f:
             for line in f:
@@ -195,24 +217,103 @@ def binder_ipc32(d):
     if not proto:
         bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
                  "unset, so the wire protocol cannot be determined.")
-    return 'ON' if proto == '7' else 'OFF'
+    if proto not in ('7', '8'):
+        # Anything else is a typo. Mapping it to a protocol silently is how a
+        # configuration mistake becomes a device that will not boot.
+        bb.fatal("binder: BINDER_PROTOCOL is '%s'; the only wire protocols are "
+                 "7 and 8." % proto)
+    return proto
 
-# Bitness follows the target ABI; the protocol follows the kernel. In a multilib
-# build SITEINFO_BITS reports 32 for the lib32- variant and 64 for the base
-# recipe, so both roles build from this one expression while sharing a protocol.
-EXTRA_OECMAKE = " \
+def binder_protocol_source(d):
+    """Where that answer came from, for the build log."""
+    import os
+    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
+    return "kernel:%s" % cfg if os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
+
+# Three switches, all stated rather than inherited.
+#
+#   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
+#   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
+#                     reports 32 for a lib32- multilib variant and 64 for the
+#                     base recipe, so both roles build from one expression.
+#   BINDER_IPC_32BIT  the wire protocol, which follows the KERNEL. Protocol 8 is
+#                     the default; deriving it anyway turns a platform drifting
+#                     back to protocol 7 into a build failure rather than a boot
+#                     failure.
+# Resolved once, and readable without running a task:
+#     bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
+# The switch derives from it, so the decision has exactly one evaluation point.
+BINDER_PROTOCOL_RESOLVED ?= "${@binder_protocol(d)}"
+BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
+
+EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
+    -DBINDER_IPC_32BIT=${@'ON' if d.getVar('BINDER_PROTOCOL_RESOLVED') == '7' else 'OFF'} \
     ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
 
-do_install() {
-    cmake --install ${B} --prefix ${D}${prefix}
+# State the decision once, in the task log, in a form a test can grep. CMake
+# prints its own "binder wire protocol: N" line, so the two are independent
+# statements of the same fact and a disagreement is visible.
+do_configure:prepend() {
+    bbplain "binder: protocol=${BINDER_PROTOCOL_RESOLVED} bits=${SITEINFO_BITS} source=${BINDER_PROTOCOL_SOURCE}"
 }
 
-FILES_${PN} += "${libdir}/lib*.so*"
-FILES_${PN}-dev += "${includedir}/*"
+do_install:append() {
+    install -d ${D}${systemd_unitdir}/system
+    install -m 0644 ${WORKDIR}/servicemanager.service ${D}${systemd_unitdir}/system
+}
+
+SYSTEMD_SERVICE:${PN} = "servicemanager.service"
+SYSTEMD_AUTO_ENABLE = "enable"
+
+FILES:${PN} += "${libdir}/lib*.so*"
+FILES:${PN}-dev += "${includedir}/*"
 ```
+
+### Which row is your platform?
+
+The recipe above derives both switches, so it needs no per-platform override. What
+it resolves to is one of exactly three configurations. Bitness is a property of
+the role; the wire protocol is a property of the platform — there is one kernel,
+so it serves one protocol, and every role on the device speaks that one.
+
+| | The kernel it matches | Switches |
+| --- | ------ | -------- |
+| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
+| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **C** — 64-bit userspace | any 64-bit kernel | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+
+**The kernel version does not decide the row — its config does.** Being 32-bit
+at 4.17 or older is what makes protocol 7 *possible*; it is not what makes it
+apply. The derivation in the recipe above reads the resolved `.config` for
+exactly this reason, and there are three states to read, not two:
+
+| In the kernel config | Protocol | Row |
+| -------------------- | -------- | --- |
+| `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | 7 | A |
+| `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` | 8 | B |
+| the symbol absent entirely | 8 | B |
+
+The third state is common: a vendor BSP that backports a newer binder driver
+onto an older base drops the option altogether, so the symbol does not exist
+even on a 4.9 kernel. A 32-bit 4.9 platform is therefore as likely to be row B
+as row A, and only its config says which. Two devices on the same silicon and
+the same 4.9 kernel version can sit in different rows.
+
+**Row A is the one that must state its switch.** Protocol 8 is the default on
+every toolchain, so rows B and C are what a build inherits without asking. A
+legacy platform is the exception and passes `-DBINDER_IPC_32BIT=ON` explicitly.
+Protocol 8 carries 64-bit wire *fields*, which a 32-bit process fills by
+zero-extension — it is the mixed-capable protocol, not the 64-bit protocol.
+
+**On a 64-bit kernel two SDKs ship** — a 32-bit one for the middleware and a
+64-bit one for the vendor: different ELF classes, both protocol 8, because both
+talk to the same kernel.
+
+A protocol mismatch is not caught at build time. It surfaces on the device, where
+every binder process terminates at startup. [`PROTOCOL.md`](PROTOCOL.md) carries
+the full matrix, the kernel-version derivation and the verification steps.
 
 **Key Points:**
 
@@ -221,7 +322,9 @@ FILES_${PN}-dev += "${includedir}/*"
   kernel in scope, and the build fails if the two disagree
 - **`SITEINFO_BITS`, not `TUNE_FEATURES`**: it is the target's word size directly, so it covers every
   64-bit architecture rather than matching on one of them, and it is multilib-aware
-- **Production builds**: Only build target runtime libraries (`BUILD_HOST_AIDL=OFF`, SDK built by default)
+- **Production builds**: Only build target runtime libraries. `BUILD_HOST_AIDL` is `OFF` by default,
+  so a recipe gets the production path without asking for it; the line above states it anyway,
+  because a build spec states its switches
 - **No AIDL compiler needed**: Architecture team generates C++ code offline using AIDL compiler
 - **Pre-generated code committed**: All AIDL-generated C++ files are in source control
 - **No code generation at build time**: Production builds compile pre-generated C++ only
@@ -239,7 +342,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 
 | Variable | Description | Default | Required? |
 |----------|-------------|---------|-----------|
-| `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `ON` | **Required** - Set to `OFF` for production |
+| `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `OFF` | Optional - already `OFF`; a production spec states it anyway |
 
 #### Architecture Selection (One Required)
 
@@ -247,7 +350,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain | Must match the target kernel |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 
@@ -273,7 +376,7 @@ Both defaults are read from the compiler's pointer size, so an unqualified build
 BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
 ```
 
-**32-bit userspace on a 64-bit kernel** — common in embedded for memory efficiency — is the 32-bit toolchain with `BINDER_IPC_32BIT=OFF` (protocol 8). The 64-bit kernel handles syscall translation over the compat path. This is the one case the default gets wrong for you: a 32-bit toolchain defaults to protocol 7, so pass `-DBINDER_IPC_32BIT=OFF` explicitly. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
+**32-bit userspace on a 64-bit kernel** — the recommended configuration on a 64-bit platform — is the 32-bit toolchain at protocol 8, which is the default. The 64-bit kernel handles syscall translation over the compat path. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
 
 #### Installation Paths (All Optional)
 
@@ -346,12 +449,16 @@ cmake --install build-host
 
 #### Minimal Required Variables Summary
 
-For **production builds**, you MUST set these two variables:
+A **production build** states these three:
 
-1. `-DBUILD_HOST_AIDL=OFF` (exclude AIDL compiler - uses pre-generated C++ code)
-2. **One of:** `-DTARGET_LIB64_VERSION=ON` **or** `-DTARGET_LIB32_VERSION=ON`
-
-All other variables have sensible defaults and are optional.
+1. `-DBUILD_HOST_AIDL=OFF` (exclude the AIDL compiler - the build uses pre-generated C++ code).
+   This is already the default; a build spec states its switches rather than inheriting them.
+2. **One of:** `-DTARGET_LIB64_VERSION=ON` **or** `-DTARGET_LIB32_VERSION=ON` - the ELF class,
+   which follows the toolchain.
+3. `-DBINDER_IPC_32BIT=ON|OFF` - the wire protocol, which follows the **kernel**, not the
+   toolchain. It defaults from the toolchain, and on a 32-bit toolchain that default is protocol 7,
+   which is wrong on every protocol-8 kernel. See the row table above for which value your platform
+   takes, and derive it from the kernel's resolved `.config` where the recipe can.
 
 ### Manual/Development Build (Wrapper Scripts)
 

@@ -41,7 +41,7 @@ set -euo pipefail
 #   TARGET_LIB32_VERSION - Declare a 32-bit target (default: follows the toolchain)
 #   BINDER_IPC_32BIT - Binder wire protocol: ON = 7, OFF = 8. Must match the
 #                    target kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
-#                    (default: follows the toolchain)
+#                    (default: OFF - protocol 8, on every toolchain)
 #   BUILD_DIR      - CMake build tree (default: build-target)
 #   OUT_DIR        - Staging tree for libs/bin/include (default: out/target)
 #
@@ -272,24 +272,20 @@ else
   CMAKE_ARGS+=(-UTARGET_LIB32_VERSION)
 fi
 
-# Binder wire protocol, decoupled from compile bitness (#42). Pass an explicit
-# BOOL whenever one is known, so a value cached from an earlier run in the
-# reused build-target dir can't silently stick (e.g. a prior BINDER_IPC_32BIT=OFF
-# run leaving the cache at protocol 8). When the env var is unset, follow the
-# TOOLCHAIN rather than TARGET_LIB32_VERSION, matching CMakeLists.txt: protocol 7
-# cannot carry 64-bit pointers, so deriving it from a declaration that the
-# compiler contradicts only ever selects a protocol the caller did not ask for.
+# Binder wire protocol, decoupled from compile bitness (#42, #72). Pass an
+# explicit BOOL when the caller states one, so a value cached from an earlier
+# run in the reused build-target dir cannot silently stick (a prior
+# BINDER_IPC_32BIT=ON run leaving the cache at protocol 7). Otherwise clear the
+# cache entry and let CMakeLists.txt apply the default, which is protocol 8 on
+# every toolchain.
+#
+# This deliberately does NOT derive. It used to mirror CMake's toolchain-derived
+# default here, and one rule written in two places is how the two drift apart:
+# when the default moved to protocol 8, this copy went on passing ON for a
+# 32-bit toolchain and quietly overrode it.
 if [ -n "${BINDER_IPC_32BIT:-}" ]; then
   CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL="${BINDER_IPC_32BIT}")
-elif [ "${PTR_SIZE_KNOWN}" = "1" ]; then
-  if [ "${TARGET_PTR_SIZE}" = "8" ]; then
-    CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL=OFF)
-  else
-    CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL=ON)
-  fi
 else
-  # Unprobeable toolchain: same reasoning as the bitness above — let CMake
-  # decide from CMAKE_SIZEOF_VOID_P, but never from a stale cache entry.
   CMAKE_ARGS+=(-UBINDER_IPC_32BIT)
 fi
 

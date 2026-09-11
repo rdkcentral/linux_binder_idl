@@ -105,6 +105,13 @@ trap cleanup EXIT
 # that share them.
 declare -A INITRAMFS_CACHE=()
 declare -A SKIPPED_VARIANT=()
+# Variants whose derivation is EXPECTED to disagree with the kernel. Not a
+# skip and not a failure: a checked assertion that the trap the docs describe
+# is real. See prepare_variant.
+declare -A EXPECTED_VARIANT=()
+# The protocol a derived build chose, kept beside the cached initramfs so a
+# cache hit still reports it in the matrix rather than a dash.
+declare -A DERIVED_CACHE=()
 
 # Read a field from a kernel's `variant` file, falling back for kernels built
 # before build-kernels.sh started writing one.
@@ -151,8 +158,13 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     local arch="$1" proto="$2" bb="$3" derive="${4:-}"
     local key="$1-p$2${derive:+-derived}"
-    VARIANT_INITRAMFS=""; VARIANT_SKIP=""
-    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""; VARIANT_DERIVED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then
+        VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"
+        VARIANT_DERIVED="${DERIVED_CACHE[${key}]:-}"
+        return 0
+    fi
+    if [ -n "${EXPECTED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1; return 1; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
 
     local mflag="" lib32=OFF ipc32=OFF
@@ -169,10 +181,10 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
 
     # Probe with <errno.h>: it reaches asm/errno.h, so this catches a host that
     # can link a bare -m32 binary but has no i386 kernel headers — which is the
-    # usual state after installing only gcc-multilib.
+    # usual state after installing a 32-bit libc without them.
     if [ -n "${mflag}" ] && \
        ! printf '#include <errno.h>\nint main(){return 0;}\n' | ${CXX} ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
-        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — see tests/install.sh (gcc-multilib/g++-multilib + linux-libc-dev:i386)"
+        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — run tests/install.sh --with-32bit (libc6-dev-i386 + lib32stdc++ + linux-libc-dev:i386)"
         VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
     fi
 
@@ -211,6 +223,25 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         # not do.
         local got_proto
         got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
+
+        # Derivation cannot reach protocol 7 — the default is protocol 8 on
+        # every toolchain (#72), because bitness cannot select the protocol and
+        # a toolchain-derived default therefore has to be wrong somewhere. It is
+        # wrong here, on the legacy kernel, and that is deliberate: the rare and
+        # shrinking case is the one that must state its switch. Assert it rather
+        # than report a build failure, and fail loudly if it ever stops being
+        # true, because the row A guidance would then be stale.
+        if [ "${proto}" = "7" ]; then
+            if [ "${got_proto}" = "8" ]; then
+                VARIANT_DERIVED="8"; DERIVED_CACHE[${key}]="8"
+                EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_IPC_32BIT=ON"
+                VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
+                return 1
+            fi
+            fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+        fi
+
+        VARIANT_DERIVED="${got_proto}"; DERIVED_CACHE[${key}]="${got_proto}"
         if [ "${got_proto}" != "${proto}" ]; then
             fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
         fi
@@ -253,8 +284,114 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     return 0
 }
 
+# A 32-bit busybox for a rootfs whose guest kernel is 64-bit. build-kernels.sh
+# stages one beside every non-x86_64 bzImage, so any i386 kernel directory
+# supplies it; without one the mixed pairing skips rather than failing.
+find_busybox32() {
+    local k d c
+    for k in "${KERNELS_LIST[@]}"; do
+        d="$(dirname "${k}")"
+        c="${d}/busybox"
+        [ -x "${c}" ] || continue
+        # A busybox staged beside an i386 kernel is an i386 busybox, by
+        # construction. prepare_variant re-checks the ELF class anyway, so a
+        # wrong one is caught there rather than reaching the guest.
+        [ "$(variant_field "${d}" arch x86_64)" = "i386" ] && { echo "${c}"; return 0; }
+    done
+    return 1
+}
+
+# Assemble a rootfs carrying BOTH bitnesses for one kernel: the native SDK at
+# /opt/binder and the 32-bit one at /opt/binder32, each with its own build of
+# the test binary rpath'd to its own libs. Sets VARIANT_INITRAMFS.
+#
+# This is what the single-bitness rows cannot show. They transact with a proxy
+# back into the same process, so both ends are always the same build; here the
+# caller and the callee are different ELF classes and the kernel has to
+# translate between them, which is the whole reason protocol 8 exists.
+prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
+    local proto="$1" bb64="$2" bb32="$3"
+    local key="mixed-p${proto}"
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
+
+    # Both userspaces, built by the existing per-variant path so they are the
+    # same artefacts the single-bitness rows use, and cached alongside them.
+    prepare_variant x86_64 "${proto}" "${bb64}" || { VARIANT_SKIP="64-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+    prepare_variant i386   "${proto}" "${bb32}" || { VARIANT_SKIP="32-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    local sdk64="${WORK}/sdk-x86_64-p${proto}" sdk32="${WORK}/sdk-i386-p${proto}"
+    local root="${WORK}/rootfs-${key}"
+    rm -rf "${root}"
+    mkdir -p "${root}"/{bin,sbin,proc,sys,dev,lib,lib64} \
+             "${root}"/opt/binder/{bin,lib} "${root}"/opt/binder32/{bin,lib}
+    cp "${bb64}" "${root}/bin/busybox"
+    local a; for a in sh mount ln sleep poweroff mkdir cat grep; do ln -sf busybox "${root}/bin/${a}"; done
+
+    cp -a "${sdk64}/lib/." "${root}/opt/binder/lib/"
+    cp -a "${sdk32}/lib/." "${root}/opt/binder32/lib/"
+    cp "${sdk64}/bin/servicemanager" "${root}/opt/binder/bin/servicemanager"
+
+    # One build of the test binary per bitness, each resolving its own SDK.
+    local inc64="" inc32="" _c
+    for _c in "${sdk64}/include/binder_sdk" "${sdk64}/include"; do [ -d "${_c}" ] && { inc64="${_c}"; break; }; done
+    for _c in "${sdk32}/include/binder_sdk" "${sdk32}/include"; do [ -d "${_c}" ] && { inc32="${_c}"; break; }; done
+    [ -n "${inc64}" ] && [ -n "${inc32}" ] || { VARIANT_SKIP="binder SDK headers missing for the mixed rootfs"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc64}" -L"${sdk64}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder/lib \
+        -o "${root}/opt/binder/bin/binder_roundtrip" 2>"${WORK}/mixed-cc64.log" \
+        || { VARIANT_SKIP="64-bit test binary failed to build (log: ${WORK}/mixed-cc64.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -m32 -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc32}" -L"${sdk32}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder32/lib \
+        -o "${root}/opt/binder32/bin/binder_roundtrip" 2>"${WORK}/mixed-cc32.log" \
+        || { VARIANT_SKIP="32-bit test binary failed to build (log: ${WORK}/mixed-cc32.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    cp "${HERE}/guest-init.sh" "${root}/init"; chmod +x "${root}/init"
+    copy_deps "${root}/opt/binder/bin/binder_roundtrip"   "${root}" "${sdk64}/lib"
+    copy_deps "${root}/opt/binder32/bin/binder_roundtrip" "${root}" "${sdk32}/lib"
+    copy_deps "${root}/opt/binder/bin/servicemanager"     "${root}" "${sdk64}/lib"
+    copy_deps "${bb64}"                                   "${root}" "${sdk64}/lib"
+
+    local img="${WORK}/initramfs-${key}.cpio.gz"
+    (cd "${root}" && find . | cpio -o -H newc 2>/dev/null | gzip) > "${img}"
+    INITRAMFS_CACHE[${key}]="${img}"
+    VARIANT_INITRAMFS="${img}"
+    return 0
+}
+
+# Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline]
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log" extra="${5:-}"
+    timeout "${TIMEOUT}" "${qemu_bin}" \
+        -m 512 -no-reboot -nographic \
+        -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
+        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3${extra:+ ${extra}}" \
+        >"${log}" 2>&1 || true
+
+    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+        echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
+        PASS=$((PASS+1)); LAST_RESULT=PASS
+    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
+        echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -n 1)"
+        FAIL=$((FAIL+1)); LAST_RESULT=FAIL
+    else
+        echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
+        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+        FAIL=$((FAIL+1)); LAST_RESULT="FAIL (no sentinel)"
+    fi
+}
+
 # ---- Boot each kernel ------------------------------------------------------
 FAIL=0; PASS=0; SKIPPED=0
+MATRIX_ROWS=()
+# kernel | guest arch | protocol the kernel serves | userspace under test |
+# switches | what derivation chose | outcome
+row() { MATRIX_ROWS+=("$1|$2|$3|$4|$5|$6|$7"); }
 for kimg in "${KERNELS_LIST[@]}"; do
     if [ ! -f "${kimg}" ]; then echo "  SKIP  ${kimg} (not found)"; SKIPPED=$((SKIPPED+1)); continue; fi
     kdir="$(dirname "${kimg}")"
@@ -276,29 +413,80 @@ for kimg in "${KERNELS_LIST[@]}"; do
     for mode in "" derive; do
         vlabel="${label}${mode:+ [derived]}"
         if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
-            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            if [ -n "${VARIANT_EXPECTED}" ]; then
+                # The derivation is wrong here by design, and proving it is the
+                # test. Booting it would only reproduce the mismatch the
+                # protocol-7-userspace negative case already covers.
+                echo "  PASS  ${vlabel}: ${VARIANT_SKIP}"; PASS=$((PASS+1))
+                row "${label}" "${arch}" "${proto}" "${arch}" "derived" "${VARIANT_DERIVED:--}" "PASS (expected mismatch)"
+            else
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+                row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "-" "SKIP"
+            fi
+            continue
         fi
 
-        log="${WORK}/qemu-${label}${mode:+-derived}.log"
         echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
-        timeout "${TIMEOUT}" "${qemu_bin}" \
-            -m 512 -no-reboot -nographic \
-            -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
-            -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
-            >"${log}" 2>&1 || true
-
-        if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
-            echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
-            PASS=$((PASS+1))
-        elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
-            echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
-            FAIL=$((FAIL+1))
-        else
-            echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
-            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-            FAIL=$((FAIL+1))
-        fi
+        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}"
+        row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "${VARIANT_DERIVED:--}" "${LAST_RESULT}"
     done
+
+    # A third pass on a 64-bit kernel: 32-bit userspace over it. This is the
+    # configuration recommended on a 64-bit platform — middleware and vendor
+    # both 32-bit — and it runs the binder driver's COMPAT path, which is
+    # distinct code from both native pairings and which nothing else here
+    # reaches. The userspace is the (i386, protocol 8) variant already built
+    # for the 32-bit-kernel rows, so this is a boot, not another build.
+    if [ "${arch}" = "x86_64" ] && [ "${proto}" = "8" ]; then
+        vlabel="${label} [32-bit userspace]"
+        bb32="$(find_busybox32 || true)"
+        if [ -z "${bb32}" ]; then
+            echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+            SKIPPED=$((SKIPPED+1))
+        elif ! prepare_variant i386 "${proto}" "${bb32}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+        else
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
+            row "${label}" "${arch}" "${proto}" "i386 (compat)" "explicit" "-" "${LAST_RESULT}"
+        fi
+
+        # And the pairing the single-bitness rows cannot show: a 32-bit and a
+        # 64-bit process transacting with EACH OTHER over this kernel. Both
+        # directions, because a reply crosses the boundary as well as a call.
+        # This is the configuration a 64-bit vendor layer with 32-bit
+        # middleware would ship, and the reason protocol 8 exists at all.
+        for scen in server64-client32 server32-client64; do
+            vlabel="${label} [${scen}]"
+            if [ -z "${bb32}" ]; then
+                echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+                SKIPPED=$((SKIPPED+1)); continue
+            fi
+            if ! prepare_mixed "${proto}" "${bb}" "${bb32}"; then
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            fi
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, mixed 32/64 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-${scen}" "binder_scenario=${scen}"
+            row "${label}" "${arch}" "${proto}" "${scen} (mixed)" "explicit" "-" "${LAST_RESULT}"
+        done
+    fi
+done
+
+# ---- Matrix cross-reference ------------------------------------------------
+# Per-boot lines say what happened; this says what was COVERED. The two columns
+# that matter together are "kernel serves" and "derived": where they differ, the
+# build would have chosen a protocol the kernel cannot speak, and the row says
+# whether that is the documented legacy case or a regression.
+echo ""
+echo "  Kernel matrix"
+printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       KERNEL GUEST "SERVES" USERSPACE SWITCHES DERIVED RESULT
+printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       ---------------- -------- ----------- -------------------------- --------- -------- ------
+for r in "${MATRIX_ROWS[@]}"; do
+    IFS='|' read -r k g p u sw dv res <<< "${r}"
+    printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+           "${k}" "${g}" "protocol ${p}" "${u}" "${sw}" "${dv}" "${res}"
 done
 
 echo ""

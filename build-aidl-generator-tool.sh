@@ -45,8 +45,16 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="${SCRIPT_DIR}"
 
-BUILD_DIR="${ROOT_DIR}/build-host"
-OUT_DIR="${ROOT_DIR}/out/host"
+# Overridable so a caller can build into its own workspace instead of the repo
+# tree, which is what a test needs to be isolated and repeatable.
+#
+# Deliberately NOT the same names build-linux-binder-aidl.sh uses. That script
+# invokes this one, so a caller who set BUILD_DIR/OUT_DIR to isolate a TARGET
+# build would have the host build inherit them and the two would share a tree -
+# host and target artifacts in one directory, with the target run reconfiguring
+# the host cache.
+BUILD_DIR="${HOST_BUILD_DIR:-${ROOT_DIR}/build-host}"
+OUT_DIR="${HOST_OUT_DIR:-${ROOT_DIR}/out/host}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 CLEAN_BUILD=false
 
