@@ -109,6 +109,9 @@ declare -A SKIPPED_VARIANT=()
 # skip and not a failure: a checked assertion that the trap the docs describe
 # is real. See prepare_variant.
 declare -A EXPECTED_VARIANT=()
+# The protocol a derived build chose, kept beside the cached initramfs so a
+# cache hit still reports it in the matrix rather than a dash.
+declare -A DERIVED_CACHE=()
 
 # Read a field from a kernel's `variant` file, falling back for kernels built
 # before build-kernels.sh started writing one.
@@ -155,8 +158,12 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     local arch="$1" proto="$2" bb="$3" derive="${4:-}"
     local key="$1-p$2${derive:+-derived}"
-    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
-    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""; VARIANT_DERIVED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then
+        VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"
+        VARIANT_DERIVED="${DERIVED_CACHE[${key}]:-}"
+        return 0
+    fi
     if [ -n "${EXPECTED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1; return 1; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
 
@@ -226,6 +233,7 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         # true, because the row A guidance would then be stale.
         if [ "${proto}" = "7" ]; then
             if [ "${got_proto}" = "8" ]; then
+                VARIANT_DERIVED="8"; DERIVED_CACHE[${key}]="8"
                 EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_IPC_32BIT=ON"
                 VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
                 return 1
@@ -233,6 +241,7 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
             fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
         fi
 
+        VARIANT_DERIVED="${got_proto}"; DERIVED_CACHE[${key}]="${got_proto}"
         if [ "${got_proto}" != "${proto}" ]; then
             fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
         fi
@@ -366,19 +375,23 @@ boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline]
 
     if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
         echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
-        PASS=$((PASS+1))
+        PASS=$((PASS+1)); LAST_RESULT=PASS
     elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
         echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -n 1)"
-        FAIL=$((FAIL+1))
+        FAIL=$((FAIL+1)); LAST_RESULT=FAIL
     else
         echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
         [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-        FAIL=$((FAIL+1))
+        FAIL=$((FAIL+1)); LAST_RESULT="FAIL (no sentinel)"
     fi
 }
 
 # ---- Boot each kernel ------------------------------------------------------
 FAIL=0; PASS=0; SKIPPED=0
+MATRIX_ROWS=()
+# kernel | guest arch | protocol the kernel serves | userspace under test |
+# switches | what derivation chose | outcome
+row() { MATRIX_ROWS+=("$1|$2|$3|$4|$5|$6|$7"); }
 for kimg in "${KERNELS_LIST[@]}"; do
     if [ ! -f "${kimg}" ]; then echo "  SKIP  ${kimg} (not found)"; SKIPPED=$((SKIPPED+1)); continue; fi
     kdir="$(dirname "${kimg}")"
@@ -405,14 +418,17 @@ for kimg in "${KERNELS_LIST[@]}"; do
                 # test. Booting it would only reproduce the mismatch the
                 # protocol-7-userspace negative case already covers.
                 echo "  PASS  ${vlabel}: ${VARIANT_SKIP}"; PASS=$((PASS+1))
+                row "${label}" "${arch}" "${proto}" "${arch}" "derived" "${VARIANT_DERIVED:--}" "PASS (expected mismatch)"
             else
                 echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+                row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "-" "SKIP"
             fi
             continue
         fi
 
         echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
         boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}"
+        row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "${VARIANT_DERIVED:--}" "${LAST_RESULT}"
     done
 
     # A third pass on a 64-bit kernel: 32-bit userspace over it. This is the
@@ -432,6 +448,7 @@ for kimg in "${KERNELS_LIST[@]}"; do
         else
             echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
             boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
+            row "${label}" "${arch}" "${proto}" "i386 (compat)" "explicit" "-" "${LAST_RESULT}"
         fi
 
         # And the pairing the single-bitness rows cannot show: a 32-bit and a
@@ -450,8 +467,26 @@ for kimg in "${KERNELS_LIST[@]}"; do
             fi
             echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, mixed 32/64 userspace, protocol ${proto})"
             boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-${scen}" "binder_scenario=${scen}"
+            row "${label}" "${arch}" "${proto}" "${scen} (mixed)" "explicit" "-" "${LAST_RESULT}"
         done
     fi
+done
+
+# ---- Matrix cross-reference ------------------------------------------------
+# Per-boot lines say what happened; this says what was COVERED. The two columns
+# that matter together are "kernel serves" and "derived": where they differ, the
+# build would have chosen a protocol the kernel cannot speak, and the row says
+# whether that is the documented legacy case or a regression.
+echo ""
+echo "  Kernel matrix"
+printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       KERNEL GUEST "SERVES" USERSPACE SWITCHES DERIVED RESULT
+printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       ---------------- -------- ----------- -------------------------- --------- -------- ------
+for r in "${MATRIX_ROWS[@]}"; do
+    IFS='|' read -r k g p u sw dv res <<< "${r}"
+    printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+           "${k}" "${g}" "protocol ${p}" "${u}" "${sw}" "${dv}" "${res}"
 done
 
 echo ""

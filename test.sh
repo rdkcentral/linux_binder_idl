@@ -751,6 +751,15 @@ test_11() {
         return 0
     fi
 
+    # The image has to be present locally. Without a registry login `sc docker
+    # run` can only use --local, so check for the image and say which it is
+    # rather than failing inside docker with a registry warning.
+    if ! sc docker list 2>/dev/null | grep -q "rdk-kirkstone"; then
+        print_info "rdk-kirkstone image not available locally - skipping cross-compilation test"
+        print_info "  pull it, or 'sc docker login' for a remote registry"
+        return 0
+    fi
+
     clean_build_state
     echo "Building with RDK Kirkstone ARM toolchain via sc docker..."
     echo "This tests cross-compilation with sysroot and ARM target flags."
@@ -758,7 +767,10 @@ test_11() {
     # Build in SC Docker with ARM toolchain environment.
     # Skip host AIDL tool build (no-host-aidl) — host tools must be built
     # natively outside Docker, not inside the cross-compilation environment.
-    if sc docker run rdk-kirkstone \
+    # --local: without a registry login `sc docker run` can only use a local
+    # image, and omitting it fails with a registry warning rather than a build
+    # error. rdk-halif-aidl's equivalent tests pass it for the same reason.
+    if sc docker run --local rdk-kirkstone \
         ". /opt/toolchains/rdk-glibc-x86_64-arm-toolchain/environment-setup-armv7vet2hf-neon-oe-linux-gnueabi && \
         export TARGET_LIB32_VERSION=ON && \
         ./build-linux-binder-aidl.sh no-host-aidl" \
