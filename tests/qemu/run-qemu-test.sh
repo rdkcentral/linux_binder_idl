@@ -217,20 +217,20 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         local got_proto
         got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
 
-        # A 32-bit toolchain cannot derive protocol 8, and no default can make
-        # it. The same i386 toolchain is correct at protocol 7 on a legacy
-        # kernel and wrong here, so bitness cannot select the protocol for both
-        # rows — which is exactly why row B has to state
-        # -DBINDER_IPC_32BIT=OFF. Assert that rather than report it as a build
-        # failure: it is the documented trap, and if it ever stops happening
-        # the guidance in PROTOCOL.md and BUILD.md has gone stale.
-        if [ "${arch}" = "i386" ] && [ "${proto}" = "8" ]; then
-            if [ "${got_proto}" = "7" ]; then
-                EXPECTED_VARIANT[${key}]="an i386 toolchain derived protocol 7 against a protocol-8 kernel, as documented — row B must state -DBINDER_IPC_32BIT=OFF"
+        # Derivation cannot reach protocol 7 — the default is protocol 8 on
+        # every toolchain (#72), because bitness cannot select the protocol and
+        # a toolchain-derived default therefore has to be wrong somewhere. It is
+        # wrong here, on the legacy kernel, and that is deliberate: the rare and
+        # shrinking case is the one that must state its switch. Assert it rather
+        # than report a build failure, and fail loudly if it ever stops being
+        # true, because the row A guidance would then be stale.
+        if [ "${proto}" = "7" ]; then
+            if [ "${got_proto}" = "8" ]; then
+                EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_IPC_32BIT=ON"
                 VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
                 return 1
             fi
-            fail "an i386 toolchain derived protocol ${got_proto:-<none reported>} against a protocol-8 kernel. It has always derived 7; if that default changed deliberately, the row B guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+            fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
         fi
 
         if [ "${got_proto}" != "${proto}" ]; then
