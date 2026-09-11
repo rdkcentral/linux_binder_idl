@@ -276,34 +276,63 @@ mixed state.
 The change lands as a flag day. libbinder compares the versions for exact equality when it opens
 the driver, so there is no interim in which some processes have moved and others have not.
 
-## Two builds per platform
+## Userspace bitness, on either kernel
 
-The binder library is built once per role, and the two roles differ only in bitness:
+**Both 32-bit and 64-bit kernels are supported**, and the kernel's bitness does not by itself
+change the userspace build. A 64-bit kernel serves protocol 8 and runs 32-bit userspace over its
+compat path; a 32-bit kernel serves protocol 8 too, once the Kconfig option is out of the way at
+4.17 and older.
 
-- **Middleware** — 32-bit, at whatever protocol the kernel serves.
-- **Vendor** — 64-bit at protocol 8 where the platform supports 64-bit; 32-bit at the kernel's
-  protocol where it does not.
+**Recommended: 32-bit userspace for both roles, on either kernel.** The switches are then identical
+everywhere, and the two builds are the same build:
+
+```text
+-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF
+```
 
 **The protocol is a property of the platform; the bitness is a property of the role.** There is one
-kernel, so it serves one protocol, and both builds must speak it. The two roles never disagree
-about the protocol — only about the ELF class.
+kernel, so it serves one protocol, and every role must speak it. Roles may differ in ELF class;
+they never differ in protocol.
 
-Two facts make the combinations closed rather than a matrix to be memorised. A 64-bit kernel
-cannot serve protocol 7, so a 64-bit vendor build is always protocol 8. And a 32-bit kernel cannot
-run 64-bit userspace, so a platform without 64-bit support has both roles at 32-bit and identical
-switches — on those platforms the two builds are the same build.
+### The 64-bit vendor variant
+
+A 64-bit vendor layer alongside 32-bit middleware, on a 64-bit kernel, is supported. Protocol 8
+exists for exactly that mixture, AIDL primitives are fixed-width so parcels are bitness-independent,
+and the role mounts already keep each side's interface libraries apart. What it obliges is
+everything that is *not* an IPC surface:
+
+- **Every in-process library both layers use, in both ELF classes.** That is the whole VSI set —
+  graphics (EGL/GLES), wifi, bluetooth, linuxinput, filesystem — plus every shared OSS library.
+- **Vendor prebuilts available 64-bit.** The GPU userspace driver, the CDM, and vendor codec
+  libraries are normally shipped as binaries in one ELF class. If the GPU blob is 32-bit only, a
+  64-bit vendor layer cannot do graphics at all.
+- **Every shared-memory layout explicitly fixed-width and padded.** A descriptor crosses the
+  boundary safely; the layout behind it does not. A control block using `size_t`, `long`, a pointer
+  or natural alignment is read differently by a 32-bit and a 64-bit peer, and corrupts silently
+  rather than failing.
+
+**Take it only where the SoC vendor supplies a complete 64-bit stack.** On an older or low-cost
+SoC that is rarely the case, and 32-bit userspace throughout is the configuration to build. The
+decision is set by what the vendor can supply, not by the kernel.
 
 ## Platform combinations
 
-Middleware is 32-bit. The kernel is 32-bit on some platforms and 64-bit on others, so the
-protocol is decided per platform while the middleware's bitness stays fixed.
+Both kernel bitnesses are supported. Middleware is 32-bit throughout, and the recommended vendor
+layer is 32-bit as well, so on every supported platform the two roles build identically and the
+only variable left is whether the kernel is old enough to still serve protocol 7.
 
 | Platform | Kernel | MW | Vendor | Protocol | MW build | Vendor build |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `LIB32=ON` `IPC32=ON` | same as MW |
 | 32-bit kernel at protocol 8 | 32-bit, option unset or absent — every kernel ≥ 4.18, and any older one whose config clears it | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
-| 64-bit kernel, 32-bit MW | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
+| **64-bit kernel — recommended** | 64-bit | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
+| 64-bit kernel, 64-bit vendor | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
 | All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `LIB64=ON` `IPC32=OFF` | same as MW |
+
+The middle three rows are the same userspace build. A 64-bit kernel changes nothing about it: the
+32-bit processes run over the kernel's compat path, which is a distinct path in the binder driver
+and is worth testing as its own case. The last two rows are the variants that need a full 64-bit
+vendor stack behind them — see above for what that obliges.
 
 Four consequences worth stating plainly:
 
