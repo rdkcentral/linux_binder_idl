@@ -105,6 +105,10 @@ trap cleanup EXIT
 # that share them.
 declare -A INITRAMFS_CACHE=()
 declare -A SKIPPED_VARIANT=()
+# Variants whose derivation is EXPECTED to disagree with the kernel. Not a
+# skip and not a failure: a checked assertion that the trap the docs describe
+# is real. See prepare_variant.
+declare -A EXPECTED_VARIANT=()
 
 # Read a field from a kernel's `variant` file, falling back for kernels built
 # before build-kernels.sh started writing one.
@@ -151,8 +155,9 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     local arch="$1" proto="$2" bb="$3" derive="${4:-}"
     local key="$1-p$2${derive:+-derived}"
-    VARIANT_INITRAMFS=""; VARIANT_SKIP=""
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
     if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    if [ -n "${EXPECTED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1; return 1; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
 
     local mflag="" lib32=OFF ipc32=OFF
@@ -169,10 +174,10 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
 
     # Probe with <errno.h>: it reaches asm/errno.h, so this catches a host that
     # can link a bare -m32 binary but has no i386 kernel headers — which is the
-    # usual state after installing only gcc-multilib.
+    # usual state after installing a 32-bit libc without them.
     if [ -n "${mflag}" ] && \
        ! printf '#include <errno.h>\nint main(){return 0;}\n' | ${CXX} ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
-        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — see tests/install.sh (gcc-multilib/g++-multilib + linux-libc-dev:i386)"
+        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — run tests/install.sh --with-32bit (libc6-dev-i386 + lib32stdc++ + linux-libc-dev:i386)"
         VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
     fi
 
@@ -211,6 +216,23 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         # not do.
         local got_proto
         got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
+
+        # A 32-bit toolchain cannot derive protocol 8, and no default can make
+        # it. The same i386 toolchain is correct at protocol 7 on a legacy
+        # kernel and wrong here, so bitness cannot select the protocol for both
+        # rows — which is exactly why row B has to state
+        # -DBINDER_IPC_32BIT=OFF. Assert that rather than report it as a build
+        # failure: it is the documented trap, and if it ever stops happening
+        # the guidance in PROTOCOL.md and BUILD.md has gone stale.
+        if [ "${arch}" = "i386" ] && [ "${proto}" = "8" ]; then
+            if [ "${got_proto}" = "7" ]; then
+                EXPECTED_VARIANT[${key}]="an i386 toolchain derived protocol 7 against a protocol-8 kernel, as documented — row B must state -DBINDER_IPC_32BIT=OFF"
+                VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
+                return 1
+            fi
+            fail "an i386 toolchain derived protocol ${got_proto:-<none reported>} against a protocol-8 kernel. It has always derived 7; if that default changed deliberately, the row B guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+        fi
+
         if [ "${got_proto}" != "${proto}" ]; then
             fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
         fi
@@ -253,6 +275,45 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     return 0
 }
 
+# A 32-bit busybox for a rootfs whose guest kernel is 64-bit. build-kernels.sh
+# stages one beside every non-x86_64 bzImage, so any i386 kernel directory
+# supplies it; without one the mixed pairing skips rather than failing.
+find_busybox32() {
+    local k d c
+    for k in "${KERNELS_LIST[@]}"; do
+        d="$(dirname "${k}")"
+        c="${d}/busybox"
+        [ -x "${c}" ] || continue
+        # A busybox staged beside an i386 kernel is an i386 busybox, by
+        # construction. prepare_variant re-checks the ELF class anyway, so a
+        # wrong one is caught there rather than reaching the guest.
+        [ "$(variant_field "${d}" arch x86_64)" = "i386" ] && { echo "${c}"; return 0; }
+    done
+    return 1
+}
+
+# Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name>
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log"
+    timeout "${TIMEOUT}" "${qemu_bin}" \
+        -m 512 -no-reboot -nographic \
+        -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
+        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
+        >"${log}" 2>&1 || true
+
+    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+        echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
+        PASS=$((PASS+1))
+    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
+        echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -n 1)"
+        FAIL=$((FAIL+1))
+    else
+        echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
+        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+        FAIL=$((FAIL+1))
+    fi
+}
+
 # ---- Boot each kernel ------------------------------------------------------
 FAIL=0; PASS=0; SKIPPED=0
 for kimg in "${KERNELS_LIST[@]}"; do
@@ -276,29 +337,40 @@ for kimg in "${KERNELS_LIST[@]}"; do
     for mode in "" derive; do
         vlabel="${label}${mode:+ [derived]}"
         if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
-            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            if [ -n "${VARIANT_EXPECTED}" ]; then
+                # The derivation is wrong here by design, and proving it is the
+                # test. Booting it would only reproduce the mismatch the
+                # protocol-7-userspace negative case already covers.
+                echo "  PASS  ${vlabel}: ${VARIANT_SKIP}"; PASS=$((PASS+1))
+            else
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+            fi
+            continue
         fi
 
-        log="${WORK}/qemu-${label}${mode:+-derived}.log"
         echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
-        timeout "${TIMEOUT}" "${qemu_bin}" \
-            -m 512 -no-reboot -nographic \
-            -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
-            -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
-            >"${log}" 2>&1 || true
-
-        if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
-            echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
-            PASS=$((PASS+1))
-        elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
-            echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
-            FAIL=$((FAIL+1))
-        else
-            echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
-            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-            FAIL=$((FAIL+1))
-        fi
+        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}"
     done
+
+    # A third pass on a 64-bit kernel: 32-bit userspace over it. This is the
+    # configuration recommended on a 64-bit platform — middleware and vendor
+    # both 32-bit — and it runs the binder driver's COMPAT path, which is
+    # distinct code from both native pairings and which nothing else here
+    # reaches. The userspace is the (i386, protocol 8) variant already built
+    # for the 32-bit-kernel rows, so this is a boot, not another build.
+    if [ "${arch}" = "x86_64" ] && [ "${proto}" = "8" ]; then
+        vlabel="${label} [32-bit userspace]"
+        bb32="$(find_busybox32 || true)"
+        if [ -z "${bb32}" ]; then
+            echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+            SKIPPED=$((SKIPPED+1))
+        elif ! prepare_variant i386 "${proto}" "${bb32}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+        else
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
+        fi
+    fi
 done
 
 echo ""

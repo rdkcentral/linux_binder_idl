@@ -102,21 +102,33 @@ target.
 
 | Target kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | Protocol served |
 | --- | --- | --- |
-| 32-bit, ≤ 4.17 | `=y` (**the default**) | **7** |
-| 32-bit, ≤ 4.17 | explicitly unset | **8** |
+| 32-bit, ≤ 4.17, stock Kconfig | `=y` (**the default**, and not settable) | **7** |
+| 32-bit, ≤ 4.17, Kconfig patched | symbol cleared or removed by a kernel change | **8** |
 | Any kernel ≥ 4.18 | option removed | **8** |
 | Any 64-bit kernel | cannot be set | **8** |
 
-**`default y` matters.** On a 32-bit kernel at 4.17 or older, protocol 7 is what the kernel serves
-unless someone turned the option off. It is the state such a kernel arrives in, not a choice
-somebody made.
+**`default y` matters, and the option is not user-configurable.** Upstream 4.9 declares it as a
+bare `bool` with **no prompt string**:
 
-That also means a legacy platform is not stuck there. Unsetting the option in its kernel config
-moves it to protocol 8 — row two above — on the same kernel version, with nothing else about the
-platform changing. Both sides must move together, because libbinder compares for exact equality,
-so it is a coordinated kernel and userspace change rather than a rolling one. A platform that
-makes that move has one protocol for its whole life, and every build on it takes
-`BINDER_IPC_32BIT=OFF`.
+```text
+config ANDROID_BINDER_IPC_32BIT
+	bool
+	depends on !64BIT && ANDROID_BINDER_IPC
+	default y
+```
+
+A symbol with no prompt cannot be set from a config. kconfig discards whatever a defconfig or
+fragment says about it and recomputes the value from `default y`, silently. So on a stock 32-bit
+kernel at 4.17 or older, protocol 7 is not a choice anyone made and not one a config can undo —
+adding `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` changes nothing, and the resolved `.config`
+still reads `=y`.
+
+Moving such a platform to protocol 8 therefore takes a **kernel source change**, not a config
+change: give the symbol a prompt so it can be cleared, change its default, or drop it — which is
+what a BSP does implicitly when it backports a newer binder driver onto the older base. Both sides
+then move together, because libbinder compares for exact equality, so it is a coordinated kernel
+and userspace change rather than a rolling one. A platform that makes that move has one protocol
+for its whole life, and every build on it takes `BINDER_IPC_32BIT=OFF`.
 
 Read the kernel's resolved `.config`, not its `defconfig`. The defconfig is an input: config
 fragments and Kconfig defaults can set or clear the symbol without it appearing there. In a Yocto
@@ -242,10 +254,16 @@ benchmark its own workload.
 
 For a 32-bit platform at 4.17 or older currently serving protocol 7:
 
-1. **Unset the option in every 32-bit defconfig for that platform** — both the ones that set it
-   explicitly and the ones that say nothing and inherit `default y`. The line to add is
-   `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set`.
-2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig.
+1. **Change the kernel, not the defconfig.** The symbol is prompt-less on a stock 4.17-or-older
+   kernel, so `# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` in a defconfig or fragment is
+   discarded and `default y` is recomputed. Give the symbol a prompt so it becomes settable —
+   `tests/qemu/patches/linux-4.9-binder-ipc32-prompt.patch` is that one-line change, and keeps
+   `default y` so no existing configuration changes meaning — then add the "is not set" line,
+   which now takes effect. Taking the newer binder driver works too, since it drops the symbol
+   altogether. A platform already carrying a patch that re-adds the option **with** a prompt can
+   clear it from the defconfig directly.
+2. **Rebuild the kernel**, and confirm from the resolved `.config` rather than the defconfig. This
+   step is what catches a defconfig edit that looked right and did nothing.
 3. **Rebuild everything on the platform that links libbinder** — servicemanager, middleware,
    vendor implementations — in the same drop. With the protocol derived from the kernel this needs
    no switch changes; the builds follow the kernel.
@@ -258,42 +276,77 @@ mixed state.
 The change lands as a flag day. libbinder compares the versions for exact equality when it opens
 the driver, so there is no interim in which some processes have moved and others have not.
 
-## Two builds per platform
+## Userspace bitness, on either kernel
 
-The binder library is built once per role, and the two roles differ only in bitness:
+**Both 32-bit and 64-bit kernels are supported**, and the kernel's bitness does not by itself
+change the userspace build. A 64-bit kernel serves protocol 8 and runs 32-bit userspace over its
+compat path; a 32-bit kernel serves protocol 8 too, once the Kconfig option is out of the way at
+4.17 and older.
 
-- **Middleware** — 32-bit, at whatever protocol the kernel serves.
-- **Vendor** — 64-bit at protocol 8 where the platform supports 64-bit; 32-bit at the kernel's
-  protocol where it does not.
+**Recommended: 32-bit userspace for both roles, on either kernel.** The switches are then identical
+everywhere, and the two builds are the same build:
+
+```text
+-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF
+```
 
 **The protocol is a property of the platform; the bitness is a property of the role.** There is one
-kernel, so it serves one protocol, and both builds must speak it. The two roles never disagree
-about the protocol — only about the ELF class.
+kernel, so it serves one protocol, and every role must speak it. Roles may differ in ELF class;
+they never differ in protocol.
 
-Two facts make the combinations closed rather than a matrix to be memorised. A 64-bit kernel
-cannot serve protocol 7, so a 64-bit vendor build is always protocol 8. And a 32-bit kernel cannot
-run 64-bit userspace, so a platform without 64-bit support has both roles at 32-bit and identical
-switches — on those platforms the two builds are the same build.
+### The 64-bit vendor variant
+
+A 64-bit vendor layer alongside 32-bit middleware, on a 64-bit kernel, is supported. Protocol 8
+exists for exactly that mixture, AIDL primitives are fixed-width so parcels are bitness-independent,
+and the role mounts already keep each side's interface libraries apart. What it obliges is
+everything that is *not* an IPC surface:
+
+- **Every in-process library both layers use, in both ELF classes.** That is the whole VSI set —
+  graphics (EGL/GLES), wifi, bluetooth, linuxinput, filesystem — plus every shared OSS library.
+- **Vendor prebuilts available 64-bit.** The GPU userspace driver, the CDM, and vendor codec
+  libraries are normally shipped as binaries in one ELF class. If the GPU blob is 32-bit only, a
+  64-bit vendor layer cannot do graphics at all.
+- **Every shared-memory layout explicitly fixed-width and padded.** A descriptor crosses the
+  boundary safely; the layout behind it does not. A control block using `size_t`, `long`, a pointer
+  or natural alignment is read differently by a 32-bit and a 64-bit peer, and corrupts silently
+  rather than failing.
+
+**Take it only where the SoC vendor supplies a complete 64-bit stack.** On an older or low-cost
+SoC that is rarely the case, and 32-bit userspace throughout is the configuration to build. The
+decision is set by what the vendor can supply, not by the kernel.
 
 ## Platform combinations
 
-Middleware is 32-bit. The kernel is 32-bit on some platforms and 64-bit on others, so the
-protocol is decided per platform while the middleware's bitness stays fixed.
+Both kernel bitnesses are supported. Middleware is 32-bit throughout, and the recommended vendor
+layer is 32-bit as well, so on every supported platform the two roles build identically and the
+only variable left is whether the kernel is old enough to still serve protocol 7.
 
 | Platform | Kernel | MW | Vendor | Protocol | MW build | Vendor build |
 | --- | --- | --- | --- | --- | --- | --- |
 | Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `LIB32=ON` `IPC32=ON` | same as MW |
-| 32-bit kernel, option absent | 32-bit, ≥ 4.18 | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
-| 64-bit kernel, 32-bit MW | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
+| 32-bit kernel at protocol 8 | 32-bit, option unset or absent — every kernel ≥ 4.18, and any older one whose config clears it | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
+| **64-bit kernel — recommended** | 64-bit | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
+| 64-bit kernel, 64-bit vendor | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
 | All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `LIB64=ON` `IPC32=OFF` | same as MW |
 
-Three consequences worth stating plainly:
+The middle three rows are the same userspace build. A 64-bit kernel changes nothing about it: the
+32-bit processes run over the kernel's compat path, which is a distinct path in the binder driver
+and is worth testing as its own case. The last two rows are the variants that need a full 64-bit
+vendor stack behind them — see above for what that obliges.
+
+Four consequences worth stating plainly:
 
 **A 32-bit middleware does not imply protocol 7.** Protocol 7 exists only on a 32-bit kernel at
 4.17 or older with the option set. On every other platform — including every 64-bit kernel — a
 32-bit middleware runs **protocol 8** over the kernel's compat path. Since a 32-bit toolchain
 defaults to protocol 7, `-DBINDER_IPC_32BIT=OFF` is the switch the middleware needs on most
 platforms, and it is never a default.
+
+**Nor does the kernel version imply it.** Being 32-bit at 4.17 or older is what makes protocol 7
+possible, not what makes it apply — the first two rows are the same kernel version with different
+configs. A vendor BSP that backports a newer binder driver onto an older base drops the option
+entirely, so a 32-bit 4.9 kernel lands in either row and only its resolved config says which. Two
+devices on the same silicon and the same kernel version can sit in different rows.
 
 **A protocol-7 platform is all-32-bit by necessity.** A 32-bit kernel cannot run 64-bit userspace,
 so the legacy row has no mixed variant.
@@ -424,20 +477,41 @@ time rather than becoming a runtime failure.
 ## Verification
 
 `tests/qemu/run-qemu-test.sh` boots each kernel twice — once with both switches pinned, proving
-the protocols interoperate, and once with neither set, proving the build derives the right
-protocol from the toolchain on its own.
+the protocols interoperate, and once with neither set, exercising what the build derives from the
+toolchain alone.
 
 | Kernel | Arch | Protocol | Switches | Result |
 | --- | --- | --- | --- | --- |
 | 4.9.337-ipc32 | i386 | 7 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 4.9.337-ipc32 | i386 | 7 | derived | PASS — `servicemanager round-trip 41->42` |
+| 4.9.337-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 4.9.337-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.15.148 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 
 4.9 and 5.4 sit on opposite sides of the 4.18 boundary where the kernel option ceases to exist, so
-the pair establishes that protocol selection holds across it.
+the pair establishes that protocol selection holds across it. **4.9 appears at both protocols**,
+which is the point of carrying it twice: one kernel version serving 7 or 8 depending only on its
+Kconfig, which is the pair seen in production on identical silicon. The protocol-8 variant is built
+with `patches/linux-4.9-binder-ipc32-prompt.patch`, because a config alone cannot get there.
+
+**The mixed rows are the recommended configuration on a 64-bit platform**, and they exercise the
+binder driver's compat path — a 32-bit process against a 64-bit kernel — which is distinct code
+from both native pairings. The userspace is the same `(i386, protocol 8)` build the 32-bit-kernel
+rows use, booted against a 64-bit kernel, so the pairing costs a boot rather than another build.
+
+**The derived rows for a 32-bit kernel at protocol 8 are assertions that derivation is wrong.** A
+32-bit toolchain resolves to protocol 7, and no default can fix that: the same toolchain is correct
+at protocol 7 on the legacy kernel and wrong here, so bitness cannot select the protocol for both.
+That is why row B states `-DBINDER_IPC_32BIT=OFF`. The harness asserts the mismatch rather than
+reporting it as a failure, and fails hard if a 32-bit toolchain ever derives 8 — because that would
+mean this guidance had gone stale.
 
 The negative cases are the point of the harness. A protocol-8 userspace against the protocol-7
 kernel fails, reproducing the field error verbatim in the guest console. And a protocol-7 variant
