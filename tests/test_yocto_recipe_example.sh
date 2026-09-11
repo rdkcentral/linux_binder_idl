@@ -59,7 +59,22 @@ for sw in "-DBUILD_HOST_AIDL=OFF" "-DBINDER_IPC_32BIT=" "TARGET_LIB32_VERSION=ON
     fi
 done
 
-# 2. Derived from the resolved .config, and from the right variable.
+# 2. The decision is reportable: a variable bitbake -e can read without running
+#    a task, and a line in the task log a matrix run can grep.
+for v in "BINDER_PROTOCOL_RESOLVED" "BINDER_PROTOCOL_SOURCE"; do
+    if grep -qF -- "${v}" "${RECIPE}"; then
+        pass "exposes ${v}"
+    else
+        fail "does not expose ${v} - the chosen protocol must be readable without a build"
+    fi
+done
+if grep -qF 'bbplain "binder: protocol=' "${RECIPE}"; then
+    pass "states the decision in the task log"
+else
+    fail "does not log the resolved protocol - a matrix run has nothing to grep"
+fi
+
+# 3. Derived from the resolved .config, and from the right variable.
 if grep -qF 'STAGING_KERNEL_BUILDDIR' "${RECIPE}" && grep -qF "'.config'" "${RECIPE}"; then
     pass "derives the protocol from the kernel's resolved .config"
 else
@@ -71,7 +86,7 @@ else
     fail "no do_configure[depends] on virtual/kernel:do_shared_workdir - the .config would not be there to read"
 fi
 
-# 3. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
+# 4. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
 #    must appear in the recipe; the recipe may carry more (its licence header,
 #    SRC_URI, systemd) than the doc chooses to show.
 BLOCK="$(awk '/^```bitbake$/{f=1;next} /^```$/{f=0} f' "${BUILD_MD}")"

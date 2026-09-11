@@ -191,7 +191,8 @@ do_configure[depends] += "virtual/kernel:do_shared_workdir"
 # empty the protocol is derived, which is what a device build should do.
 BINDER_PROTOCOL ?= ""
 
-def binder_ipc32(d):
+def binder_protocol(d):
+    """Return the wire protocol this build must speak: '7' or '8'."""
     import os
     want = d.getVar('BINDER_PROTOCOL') or ''
     cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
@@ -215,7 +216,13 @@ def binder_ipc32(d):
     if not proto:
         bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
                  "unset, so the wire protocol cannot be determined.")
-    return 'ON' if proto == '7' else 'OFF'
+    return proto
+
+def binder_protocol_source(d):
+    """Where that answer came from, for the build log."""
+    import os
+    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
+    return "kernel:%s" % cfg if os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
 
 # Three switches, all stated rather than inherited.
 #
@@ -227,11 +234,24 @@ def binder_ipc32(d):
 #                     the default; deriving it anyway turns a platform drifting
 #                     back to protocol 7 into a build failure rather than a boot
 #                     failure.
+# Resolved once, and readable without running a task:
+#     bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
+# The switch derives from it, so the decision has exactly one evaluation point.
+BINDER_PROTOCOL_RESOLVED ?= "${@binder_protocol(d)}"
+BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
+
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
+    -DBINDER_IPC_32BIT=${@'ON' if d.getVar('BINDER_PROTOCOL_RESOLVED') == '7' else 'OFF'} \
     ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
+
+# State the decision once, in the task log, in a form a test can grep. CMake
+# prints its own "binder wire protocol: N" line, so the two are independent
+# statements of the same fact and a disagreement is visible.
+do_configure:prepend() {
+    bbplain "binder: protocol=${BINDER_PROTOCOL_RESOLVED} bits=${SITEINFO_BITS} source=${BINDER_PROTOCOL_SOURCE}"
+}
 
 do_install:append() {
     install -d ${D}${systemd_unitdir}/system
