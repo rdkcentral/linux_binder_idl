@@ -41,7 +41,7 @@ set -euo pipefail
 #   TARGET_LIB32_VERSION - Declare a 32-bit target (default: follows the toolchain)
 #   BINDER_IPC_32BIT - Binder wire protocol: ON = 7, OFF = 8. Must match the
 #                    target kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
-#                    (default: follows the toolchain)
+#                    (default: OFF - protocol 8, on every toolchain)
 #   BUILD_DIR      - CMake build tree (default: build-target)
 #   OUT_DIR        - Staging tree for libs/bin/include (default: out/target)
 #

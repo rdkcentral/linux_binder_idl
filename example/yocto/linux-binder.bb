@@ -29,6 +29,10 @@
 SUMMARY = "Linux Binder IPC runtime (libbinder, libutils, servicemanager)"
 LICENSE = "Apache-2.0"
 
+# files/ sits beside this recipe and holds the systemd unit. Without this a
+# layer that copies only the .bb fails during fetch, before anything builds.
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+
 SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_URI_SUFFIX}"
 SRC_URI += "file://servicemanager.service"
 
@@ -77,6 +81,11 @@ def binder_protocol(d):
     if not proto:
         bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
                  "unset, so the wire protocol cannot be determined.")
+    if proto not in ('7', '8'):
+        # Anything else is a typo. Mapping it to a protocol silently is how a
+        # configuration mistake becomes a device that will not boot.
+        bb.fatal("binder: BINDER_PROTOCOL is '%s'; the only wire protocols are "
+                 "7 and 8." % proto)
     return proto
 
 def binder_protocol_source(d):
