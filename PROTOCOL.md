@@ -495,6 +495,10 @@ toolchain alone.
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290 | x86_64 kernel, **64-bit server + 32-bit client** | 8 | explicit | PASS — `cross-process round-trip 41->42` |
+| 5.4.290 | x86_64 kernel, **32-bit server + 64-bit client** | 8 | explicit | PASS — `cross-process round-trip 41->42` |
+| 5.15.148 | x86_64 kernel, **64-bit server + 32-bit client** | 8 | explicit | PASS — `cross-process round-trip 41->42` |
+| 5.15.148 | x86_64 kernel, **32-bit server + 64-bit client** | 8 | explicit | PASS — `cross-process round-trip 41->42` |
 
 4.9 and 5.4 sit on opposite sides of the 4.18 boundary where the kernel option ceases to exist, so
 the pair establishes that protocol selection holds across it. **4.9 appears at both protocols**,
@@ -502,7 +506,17 @@ which is the point of carrying it twice: one kernel version serving 7 or 8 depen
 Kconfig, which is the pair seen in production on identical silicon. The protocol-8 variant is built
 with `patches/linux-4.9-binder-ipc32-prompt.patch`, because a config alone cannot get there.
 
-**The mixed rows are the recommended configuration on a 64-bit platform**, and they exercise the
+**The two-process rows are protocol 8 doing the one thing it exists for.** A
+32-bit and a 64-bit process transact with each other over one kernel, in both
+directions, so a call and its reply each cross the boundary. Every other row is
+a single process talking to a proxy back into itself, where both ends are the
+same build by construction and no translation happens — which is why the claim
+that protocol 8 "supports both 32 and 64bit applications in a mixed
+environment" went unexercised until these rows existed. They are also the
+transport half of a 64-bit vendor layer with 32-bit middleware; what such a
+platform additionally owes is in **Userspace bitness, on either kernel** above.
+
+**The single-bitness mixed rows are the recommended configuration on a 64-bit platform**, and they exercise the
 binder driver's compat path — a 32-bit process against a 64-bit kernel — which is distinct code
 from both native pairings. The userspace is the same `(i386, protocol 8)` build the 32-bit-kernel
 rows use, booted against a 64-bit kernel, so the pairing costs a boot rather than another build.

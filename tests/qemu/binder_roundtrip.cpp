@@ -41,6 +41,8 @@
 #include <utils/StrongPointer.h>
 
 #include <cstdio>
+#include <cstring>
+#include <unistd.h>
 
 using namespace android;
 
@@ -66,7 +68,53 @@ public:
 
 }  // namespace
 
-int main() {
+// Register the service and stay up, so a SEPARATE process can call it. Used by
+// the mixed-bitness rows, where the caller is a different ELF class from the
+// callee and the kernel has to translate between them - the thing protocol 8
+// exists for. The single-process path below cannot show that: it transacts with
+// a proxy back to itself, so both ends are always the same build.
+static int run_server(const char* tag) {
+    sp<ProcessState> proc = ProcessState::self();
+    proc->startThreadPool();
+
+    sp<IServiceManager> sm = defaultServiceManager();
+    if (sm == nullptr) return fail("no servicemanager (is it running?)");
+
+    sp<TestService> svc = new TestService();
+    if (sm->addService(String16(kServiceName), svc) != OK) return fail("addService failed");
+
+    printf("QEMU_BINDER_SERVER_READY %s\n", tag);
+    fflush(stdout);
+    for (;;) pause();     // serve until the guest powers off
+    return 0;
+}
+
+// Look the service up and call it. The service is hosted by another process,
+// which on a mixed row was built at the other bitness.
+static int run_client(const char* tag) {
+    sp<ProcessState> proc = ProcessState::self();
+    proc->startThreadPool();
+
+    sp<IServiceManager> sm = defaultServiceManager();
+    if (sm == nullptr) return fail("no servicemanager (is it running?)");
+
+    sp<IBinder> handle = sm->checkService(String16(kServiceName));
+    if (handle == nullptr) return fail("checkService returned null (is the server up?)");
+
+    Parcel data, reply;
+    data.writeInt32(41);
+    if (handle->transact(TEST_CODE, data, &reply) != OK) return fail("transact returned non-OK");
+    if (reply.readInt32() != 42) return fail("unexpected reply value");
+
+    char detail[160];
+    snprintf(detail, sizeof(detail), "(cross-process round-trip 41->42, %s)", tag);
+    pass(detail);
+    return 0;
+}
+
+// Both ends in one process: the original gate, kept unchanged so every existing
+// row behaves exactly as before.
+static int run_selftest() {
     // 1. Driver open + protocol-version check happens here.
     sp<ProcessState> proc = ProcessState::self();
     proc->startThreadPool();
@@ -103,4 +151,11 @@ int main() {
     // ---------------------------------------------------------------------------
 
     return 0;
+}
+
+int main(int argc, char** argv) {
+    const char* tag = (argc > 2) ? argv[2] : "";
+    if (argc > 1 && strcmp(argv[1], "--server") == 0) return run_server(tag);
+    if (argc > 1 && strcmp(argv[1], "--client") == 0) return run_client(tag);
+    return run_selftest();
 }
