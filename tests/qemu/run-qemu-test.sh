@@ -292,13 +292,76 @@ find_busybox32() {
     return 1
 }
 
+# Assemble a rootfs carrying BOTH bitnesses for one kernel: the native SDK at
+# /opt/binder and the 32-bit one at /opt/binder32, each with its own build of
+# the test binary rpath'd to its own libs. Sets VARIANT_INITRAMFS.
+#
+# This is what the single-bitness rows cannot show. They transact with a proxy
+# back into the same process, so both ends are always the same build; here the
+# caller and the callee are different ELF classes and the kernel has to
+# translate between them, which is the whole reason protocol 8 exists.
+prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
+    local proto="$1" bb64="$2" bb32="$3"
+    local key="mixed-p${proto}"
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
+
+    # Both userspaces, built by the existing per-variant path so they are the
+    # same artefacts the single-bitness rows use, and cached alongside them.
+    prepare_variant x86_64 "${proto}" "${bb64}" || { VARIANT_SKIP="64-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+    prepare_variant i386   "${proto}" "${bb32}" || { VARIANT_SKIP="32-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    local sdk64="${WORK}/sdk-x86_64-p${proto}" sdk32="${WORK}/sdk-i386-p${proto}"
+    local root="${WORK}/rootfs-${key}"
+    rm -rf "${root}"
+    mkdir -p "${root}"/{bin,sbin,proc,sys,dev,lib,lib64} \
+             "${root}"/opt/binder/{bin,lib} "${root}"/opt/binder32/{bin,lib}
+    cp "${bb64}" "${root}/bin/busybox"
+    local a; for a in sh mount ln sleep poweroff mkdir cat grep; do ln -sf busybox "${root}/bin/${a}"; done
+
+    cp -a "${sdk64}/lib/." "${root}/opt/binder/lib/"
+    cp -a "${sdk32}/lib/." "${root}/opt/binder32/lib/"
+    cp "${sdk64}/bin/servicemanager" "${root}/opt/binder/bin/servicemanager"
+
+    # One build of the test binary per bitness, each resolving its own SDK.
+    local inc64="" inc32="" _c
+    for _c in "${sdk64}/include/binder_sdk" "${sdk64}/include"; do [ -d "${_c}" ] && { inc64="${_c}"; break; }; done
+    for _c in "${sdk32}/include/binder_sdk" "${sdk32}/include"; do [ -d "${_c}" ] && { inc32="${_c}"; break; }; done
+    [ -n "${inc64}" ] && [ -n "${inc32}" ] || { VARIANT_SKIP="binder SDK headers missing for the mixed rootfs"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc64}" -L"${sdk64}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder/lib \
+        -o "${root}/opt/binder/bin/binder_roundtrip" 2>"${WORK}/mixed-cc64.log" \
+        || { VARIANT_SKIP="64-bit test binary failed to build (log: ${WORK}/mixed-cc64.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -m32 -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc32}" -L"${sdk32}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder32/lib \
+        -o "${root}/opt/binder32/bin/binder_roundtrip" 2>"${WORK}/mixed-cc32.log" \
+        || { VARIANT_SKIP="32-bit test binary failed to build (log: ${WORK}/mixed-cc32.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    cp "${HERE}/guest-init.sh" "${root}/init"; chmod +x "${root}/init"
+    copy_deps "${root}/opt/binder/bin/binder_roundtrip"   "${root}" "${sdk64}/lib"
+    copy_deps "${root}/opt/binder32/bin/binder_roundtrip" "${root}" "${sdk32}/lib"
+    copy_deps "${root}/opt/binder/bin/servicemanager"     "${root}" "${sdk64}/lib"
+    copy_deps "${bb64}"                                   "${root}" "${sdk64}/lib"
+
+    local img="${WORK}/initramfs-${key}.cpio.gz"
+    (cd "${root}" && find . | cpio -o -H newc 2>/dev/null | gzip) > "${img}"
+    INITRAMFS_CACHE[${key}]="${img}"
+    VARIANT_INITRAMFS="${img}"
+    return 0
+}
+
 # Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
-boot_variant() {   # <kimg> <qemu-bin> <label> <log-name>
-    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log"
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline]
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log" extra="${5:-}"
     timeout "${TIMEOUT}" "${qemu_bin}" \
         -m 512 -no-reboot -nographic \
         -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
-        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
+        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3${extra:+ ${extra}}" \
         >"${log}" 2>&1 || true
 
     if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
@@ -370,6 +433,24 @@ for kimg in "${KERNELS_LIST[@]}"; do
             echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
             boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
         fi
+
+        # And the pairing the single-bitness rows cannot show: a 32-bit and a
+        # 64-bit process transacting with EACH OTHER over this kernel. Both
+        # directions, because a reply crosses the boundary as well as a call.
+        # This is the configuration a 64-bit vendor layer with 32-bit
+        # middleware would ship, and the reason protocol 8 exists at all.
+        for scen in server64-client32 server32-client64; do
+            vlabel="${label} [${scen}]"
+            if [ -z "${bb32}" ]; then
+                echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+                SKIPPED=$((SKIPPED+1)); continue
+            fi
+            if ! prepare_mixed "${proto}" "${bb}" "${bb32}"; then
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            fi
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, mixed 32/64 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-${scen}" "binder_scenario=${scen}"
+        done
     fi
 done
 
