@@ -45,8 +45,11 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="${SCRIPT_DIR}"
 
-BUILD_DIR="${ROOT_DIR}/build-host"
-OUT_DIR="${ROOT_DIR}/out/host"
+# Overridable so a caller can build into its own workspace instead of the repo
+# tree, which is what a test needs to be isolated and repeatable.
+# build-linux-binder-aidl.sh takes the same two variables.
+BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-host}"
+OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out/host}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 CLEAN_BUILD=false
 
