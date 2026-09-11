@@ -65,7 +65,7 @@ STUB_M4="${STUB_BIN_DIR}/m4"
 
 # Each test gets its own out/build dirs so failures don't poison reruns, and so
 # a run never depends on what a previous one left in the repo tree. These are
-# passed to the build script through BUILD_DIR/OUT_DIR by run_build below —
+# passed to the build script through HOST_BUILD_DIR/HOST_OUT_DIR by run_build —
 # declaring them without passing them is what made this test pass on a clean
 # checkout and fail on every run after it.
 TEST_OUT="${SCRATCH}/out"
@@ -91,7 +91,7 @@ run_build() {
   local log_file="$2"
   # shellcheck disable=SC2086
   env -i HOME="${HOME}" PATH="${PATH}" \
-      BUILD_DIR="${TEST_BUILD}" OUT_DIR="${TEST_OUT}" ${extra_env} \
+      HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" ${extra_env} \
       bash "${BUILD_SCRIPT}" >"${log_file}" 2>&1
 }
 
@@ -121,7 +121,7 @@ test_build_with_broken_inherited_m4() {
   # Build into the scratch dir, never the repo tree. The build script takes
   # BUILD_DIR/OUT_DIR for exactly this.
   ( cd "${REPO_ROOT}" && \
-    BUILD_DIR="${TEST_BUILD}" OUT_DIR="${TEST_OUT}" \
+    HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" \
     M4="${STUB_M4}" bash "${BUILD_SCRIPT}" ) >"${log}" 2>&1 \
     && rc=0 || rc=$?
 
@@ -163,7 +163,7 @@ test_build_with_m4_not_on_path() {
   fi
 
   ( cd "${REPO_ROOT}" && \
-    BUILD_DIR="${TEST_BUILD}" OUT_DIR="${TEST_OUT}" \
+    HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" \
     PATH="${stripped_bin}" bash "${BUILD_SCRIPT}" ) >"${log}" 2>&1 \
     && rc=0 || rc=$?
 

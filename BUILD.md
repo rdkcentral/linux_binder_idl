@@ -122,7 +122,7 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain |
 
 ### Examples
 
@@ -165,8 +165,9 @@ in the repository so you can copy or diff it rather than retype it.
 disagree, so the two cannot drift apart:
 
 ```bitbake
-SUMMARY = "Linux Binder IPC runtime (libbinder, libutils, servicemanager)"
-LICENSE = "Apache-2.0"
+# files/ sits beside this recipe and holds the systemd unit. Without this a
+# layer that copies only the .bb fails during fetch, before anything builds.
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_URI_SUFFIX}"
 SRC_URI += "file://servicemanager.service"
@@ -216,6 +217,11 @@ def binder_protocol(d):
     if not proto:
         bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
                  "unset, so the wire protocol cannot be determined.")
+    if proto not in ('7', '8'):
+        # Anything else is a typo. Mapping it to a protocol silently is how a
+        # configuration mistake becomes a device that will not boot.
+        bb.fatal("binder: BINDER_PROTOCOL is '%s'; the only wire protocols are "
+                 "7 and 8." % proto)
     return proto
 
 def binder_protocol_source(d):
@@ -344,7 +350,7 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain | Must match the target kernel |
+| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 

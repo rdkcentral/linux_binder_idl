@@ -1,0 +1,20 @@
+# Copyright 2026 RDK Management
+# SPDX-License-Identifier: Apache-2.0
+#
+# servicemanager owns the binder context. Every binder process resolves names
+# through it, so nothing that uses binder can start before it has registered as
+# the context manager.
+
+[Unit]
+Description=Android Binder service manager
+After=binder.mount
+ConditionPathExists=/dev/binder
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/servicemanager
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
