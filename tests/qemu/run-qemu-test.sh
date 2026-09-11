@@ -275,6 +275,45 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     return 0
 }
 
+# A 32-bit busybox for a rootfs whose guest kernel is 64-bit. build-kernels.sh
+# stages one beside every non-x86_64 bzImage, so any i386 kernel directory
+# supplies it; without one the mixed pairing skips rather than failing.
+find_busybox32() {
+    local k d c
+    for k in "${KERNELS_LIST[@]}"; do
+        d="$(dirname "${k}")"
+        c="${d}/busybox"
+        [ -x "${c}" ] || continue
+        # A busybox staged beside an i386 kernel is an i386 busybox, by
+        # construction. prepare_variant re-checks the ELF class anyway, so a
+        # wrong one is caught there rather than reaching the guest.
+        [ "$(variant_field "${d}" arch x86_64)" = "i386" ] && { echo "${c}"; return 0; }
+    done
+    return 1
+}
+
+# Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name>
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log"
+    timeout "${TIMEOUT}" "${qemu_bin}" \
+        -m 512 -no-reboot -nographic \
+        -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
+        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
+        >"${log}" 2>&1 || true
+
+    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+        echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
+        PASS=$((PASS+1))
+    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
+        echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -n 1)"
+        FAIL=$((FAIL+1))
+    else
+        echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
+        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+        FAIL=$((FAIL+1))
+    fi
+}
+
 # ---- Boot each kernel ------------------------------------------------------
 FAIL=0; PASS=0; SKIPPED=0
 for kimg in "${KERNELS_LIST[@]}"; do
@@ -309,26 +348,29 @@ for kimg in "${KERNELS_LIST[@]}"; do
             continue
         fi
 
-        log="${WORK}/qemu-${label}${mode:+-derived}.log"
         echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
-        timeout "${TIMEOUT}" "${qemu_bin}" \
-            -m 512 -no-reboot -nographic \
-            -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
-            -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
-            >"${log}" 2>&1 || true
-
-        if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
-            echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
-            PASS=$((PASS+1))
-        elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
-            echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
-            FAIL=$((FAIL+1))
-        else
-            echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
-            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-            FAIL=$((FAIL+1))
-        fi
+        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}"
     done
+
+    # A third pass on a 64-bit kernel: 32-bit userspace over it. This is the
+    # configuration recommended on a 64-bit platform — middleware and vendor
+    # both 32-bit — and it runs the binder driver's COMPAT path, which is
+    # distinct code from both native pairings and which nothing else here
+    # reaches. The userspace is the (i386, protocol 8) variant already built
+    # for the 32-bit-kernel rows, so this is a boot, not another build.
+    if [ "${arch}" = "x86_64" ] && [ "${proto}" = "8" ]; then
+        vlabel="${label} [32-bit userspace]"
+        bb32="$(find_busybox32 || true)"
+        if [ -z "${bb32}" ]; then
+            echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+            SKIPPED=$((SKIPPED+1))
+        elif ! prepare_variant i386 "${proto}" "${bb32}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+        else
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
+        fi
+    fi
 done
 
 echo ""

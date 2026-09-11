@@ -488,16 +488,23 @@ toolchain alone.
 | 4.9.337-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.4.290 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290-i386 | i386 | 8 | derived | PASS — derives 7, as documented |
 | 5.15.148 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 5.15.148 | x86_64 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
+| 5.15.148 | x86_64 kernel, **i386 userspace** | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 
 4.9 and 5.4 sit on opposite sides of the 4.18 boundary where the kernel option ceases to exist, so
 the pair establishes that protocol selection holds across it. **4.9 appears at both protocols**,
 which is the point of carrying it twice: one kernel version serving 7 or 8 depending only on its
 Kconfig, which is the pair seen in production on identical silicon. The protocol-8 variant is built
 with `patches/linux-4.9-binder-ipc32-prompt.patch`, because a config alone cannot get there.
+
+**The mixed rows are the recommended configuration on a 64-bit platform**, and they exercise the
+binder driver's compat path — a 32-bit process against a 64-bit kernel — which is distinct code
+from both native pairings. The userspace is the same `(i386, protocol 8)` build the 32-bit-kernel
+rows use, booted against a 64-bit kernel, so the pairing costs a boot rather than another build.
 
 **The derived rows for a 32-bit kernel at protocol 8 are assertions that derivation is wrong.** A
 32-bit toolchain resolves to protocol 7, and no default can fix that: the same toolchain is correct
