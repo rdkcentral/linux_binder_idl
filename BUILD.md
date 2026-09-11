@@ -159,20 +159,36 @@ export TARGET_LIB32_VERSION=ON
 
 **Production builds only require TARGET libraries** - the AIDL compiler is used offline by the architecture team (using `./build-aidl-generator-tool.sh` for convenience) to generate interface code, which is then committed to the repository.
 
-**BitBake Recipe Example:**
+**BitBake Recipe Example** — this is `example/yocto/linux-binder.bb`, kept
+in the repository so you can copy or diff it rather than retype it.
+`tests/test_yocto_recipe_example.sh` fails if this block and that file
+disagree, so the two cannot drift apart:
 
 ```bitbake
-inherit cmake siteinfo
+SUMMARY = "Linux Binder IPC runtime (libbinder, libutils, servicemanager)"
+LICENSE = "Apache-2.0"
 
-# Production recipe - build binder runtime libraries only
-DEPENDS = ""
+SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_URI_SUFFIX}"
+SRC_URI += "file://servicemanager.service"
+
+# Pin to a released tag. A branch name or a feature-branch SHA makes the build
+# unreproducible and is not a supported configuration.
+PV ?= "2.6.0"
+SRCREV ?= "2.6.0"
+S = "${WORKDIR}/git"
+
+# libbinder provides liblog; do not also build liblog.bb.
+RPROVIDES:${PN}:append = " liblog"
+PROVIDES:append = " liblog"
+
+inherit cmake systemd siteinfo
 
 # The wire protocol belongs to the kernel, so the recipe needs the configured
 # kernel in scope to read it.
 do_configure[depends] += "virtual/kernel:do_shared_workdir"
 
-# Machine/distro override, for a build with no kernel in scope (an SDK, say).
-# Left empty the protocol is derived, which is what a device build should do.
+# Escape hatch for a build with no kernel in scope, an SDK for instance. Left
+# empty the protocol is derived, which is what a device build should do.
 BINDER_PROTOCOL ?= ""
 
 def binder_ipc32(d):
@@ -181,6 +197,10 @@ def binder_ipc32(d):
     cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
     derived = ''
     if os.path.exists(cfg):
+        # Read the RESOLVED .config, never the defconfig. A defconfig may
+        # request a symbol the kernel's Kconfig no longer has, and the request
+        # is dropped silently - so a defconfig can claim protocol 7 while the
+        # kernel it produced serves protocol 8.
         derived = '8'
         with open(cfg) as f:
             for line in f:
@@ -197,21 +217,32 @@ def binder_ipc32(d):
                  "unset, so the wire protocol cannot be determined.")
     return 'ON' if proto == '7' else 'OFF'
 
-# Bitness follows the target ABI; the protocol follows the kernel. In a multilib
-# build SITEINFO_BITS reports 32 for the lib32- variant and 64 for the base
-# recipe, so both roles build from this one expression while sharing a protocol.
-EXTRA_OECMAKE = " \
+# Three switches, all stated rather than inherited.
+#
+#   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
+#   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
+#                     reports 32 for a lib32- multilib variant and 64 for the
+#                     base recipe, so both roles build from one expression.
+#   BINDER_IPC_32BIT  the wire protocol, which follows the KERNEL. Protocol 8 is
+#                     the default; deriving it anyway turns a platform drifting
+#                     back to protocol 7 into a build failure rather than a boot
+#                     failure.
+EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
     -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
     ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
 
-do_install() {
-    cmake --install ${B} --prefix ${D}${prefix}
+do_install:append() {
+    install -d ${D}${systemd_unitdir}/system
+    install -m 0644 ${WORKDIR}/servicemanager.service ${D}${systemd_unitdir}/system
 }
 
-FILES_${PN} += "${libdir}/lib*.so*"
-FILES_${PN}-dev += "${includedir}/*"
+SYSTEMD_SERVICE:${PN} = "servicemanager.service"
+SYSTEMD_AUTO_ENABLE = "enable"
+
+FILES:${PN} += "${libdir}/lib*.so*"
+FILES:${PN}-dev += "${includedir}/*"
 ```
 
 ### Which row is your platform?
