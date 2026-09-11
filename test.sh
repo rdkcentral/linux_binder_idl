@@ -39,6 +39,12 @@ set -euo pipefail
 #   10    Production build (minimal flags + install)
 #   11    SC Docker cross-compilation (RDK Kirkstone ARM)
 #   12    Incremental build
+#   13    Component test suite (tests/run-tests.sh)
+#   14    QEMU kernel matrix
+#
+# Everything runs by default, including the kernel matrix. --no-qemu and
+# --no-suite opt out; nothing opts in, because a suite whose important parts
+# are opt-in gets run without them.
 ###########################################################
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -70,6 +76,8 @@ usage() {
     echo "  --from ID    Start running at test ID (e.g., 3 or 6)"
     echo "  --to ID      Stop after test ID (inclusive)"
     echo "  --only IDs   Run only specified test IDs (comma-separated)"
+    echo "  --no-qemu    Skip the QEMU kernel matrix (test 14)"
+    echo "  --no-suite   Skip the component test suite (test 13)"
     echo "  --list       List available test IDs"
     echo "  --help       Show this help"
 }
@@ -130,7 +138,7 @@ check_warnings_errors() {
 # Test ID management and CLI
 ###########################################################
 
-TEST_IDS=("1" "1.1" "2" "2.5" "2.6" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12")
+TEST_IDS=("1" "1.1" "2" "2.5" "2.6" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12" "13" "14")
 
 list_tests() {
     echo "Available tests:"
@@ -149,6 +157,8 @@ list_tests() {
     echo "  10    Production build (minimal flags + install)"
     echo "  11    SC Docker cross-compilation (RDK Kirkstone ARM toolchain)"
     echo "  12    Incremental build"
+    echo "  13    Component test suite (tests/run-tests.sh)"
+    echo "  14    QEMU kernel matrix (boots each kernel, real binder round-trip)"
 }
 
 index_of_test_id() {
@@ -291,6 +301,8 @@ check_install_layout() {
 START_INDEX=0
 END_INDEX=$((${#TEST_IDS[@]} - 1))
 ONLY_IDS=()
+SKIP_QEMU_MATRIX=0
+SKIP_COMPONENT_SUITE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -315,6 +327,12 @@ while [ $# -gt 0 ]; do
         --only)
             shift
             parse_only_ids "${1:-}"
+            ;;
+        --no-qemu)
+            SKIP_QEMU_MATRIX=1
+            ;;
+        --no-suite)
+            SKIP_COMPONENT_SUITE=1
             ;;
         --list)
             list_tests
@@ -813,6 +831,51 @@ test_12() {
     fi
 }
 
+test_13() {
+    if [ "${SKIP_COMPONENT_SUITE}" = "1" ]; then
+        print_info "skipped by --no-suite"
+        return 0
+    fi
+    echo "Running the component test suite (kernel matrix runs separately as test 14)..."
+    # SKIP_QEMU=1: test 14 owns the matrix, so that a missing kernel is a
+    # failure there rather than a silent skip here.
+    if SKIP_QEMU=1 ./tests/run-tests.sh; then
+        print_pass "component test suite"
+    else
+        print_fail "component test suite"
+    fi
+}
+
+test_14() {
+    if [ "${SKIP_QEMU_MATRIX}" = "1" ]; then
+        print_info "skipped by --no-qemu"
+        return 0
+    fi
+    echo "Booting the QEMU kernel matrix..."
+    local log=/tmp/qemu_matrix.log
+    ./tests/qemu/run-qemu-test.sh >"${log}" 2>&1
+    local rc=$?
+    sed -n 's/^  \(PASS\|FAIL\|SKIP\)  /  \1  /p' "${log}"
+
+    # A skip here is a FAILURE. The matrix is the only thing that proves the
+    # built library talks to a kernel, and it skips itself when the kernels are
+    # absent or qemu is not installed - so treating a skip as success would let
+    # a green run mean nothing was booted. --no-qemu is how you opt out on
+    # purpose; a missing prerequisite is not the same thing.
+    if grep -q '^  SKIP  qemu binder test' "${log}"; then
+        print_fail "QEMU matrix did not run: $(sed -n 's/^  SKIP  qemu binder test — //p' "${log}" | head -n 1)"
+        echo "         build the kernels with ./tests/qemu/build-kernels.sh,"
+        echo "         or pass --no-qemu to skip this deliberately."
+        return 0
+    fi
+    if [ "${rc}" -eq 0 ]; then
+        print_pass "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+    else
+        print_fail "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+        tail -20 "${log}" | sed 's/^/        /'
+    fi
+}
+
 ###########################################################
 # Run tests
 ###########################################################
@@ -832,6 +895,8 @@ run_test "9" "Direct CMake build (per BUILD.md + install)" test_9
 run_test "10" "Production build (minimal flags + install)" test_10
 run_test "11" "SC Docker cross-compilation (RDK Kirkstone ARM)" test_11
 run_test "12" "Incremental build" test_12
+run_test "13" "Component test suite (tests/run-tests.sh)" test_13
+run_test "14" "QEMU kernel matrix" test_14
 
 ###########################################################
 # Summary

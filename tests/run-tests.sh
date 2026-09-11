@@ -38,6 +38,13 @@ FILTER="${2:-}"
 mapfile -t TESTS < <(find "${HERE}" -maxdepth 1 \( -name 'test_*.sh' -o -name 'test_*.py' \) -type f | sort)
 [ -n "${FILTER}" ] && mapfile -t TESTS < <(printf '%s\n' "${TESTS[@]}" | grep -- "${FILTER}" || true)
 
+# SKIP_QEMU=1 drops the kernel matrix. test.sh runs it as its own step so that a
+# missing kernel can be reported as a failure rather than a silent skip; this
+# keeps it from running twice.
+if [ "${SKIP_QEMU:-0}" = "1" ]; then
+    mapfile -t TESTS < <(printf '%s\n' "${TESTS[@]}" | grep -v 'test_qemu_binder\.sh$' || true)
+fi
+
 echo "========================================="
 echo "  linux_binder_idl test suite"
 echo "  discovered: ${#TESTS[@]} test(s)"
