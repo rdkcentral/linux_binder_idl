@@ -122,7 +122,8 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain |
+| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
+| `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` |
 
 ### Examples
 
@@ -236,10 +237,11 @@ def binder_protocol_source(d):
 #   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
 #                     reports 32 for a lib32- multilib variant and 64 for the
 #                     base recipe, so both roles build from one expression.
-#   BINDER_IPC_32BIT  the wire protocol, which follows the KERNEL. Protocol 8 is
-#                     the default; deriving it anyway turns a platform drifting
-#                     back to protocol 7 into a build failure rather than a boot
-#                     failure.
+#   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
+#                     Protocol 8 is the default; deriving it anyway turns a
+#                     platform drifting back to protocol 7 into a build failure
+#                     rather than a boot failure. BINDER_IPC_32BIT is the old
+#                     spelling of the same switch and still works.
 # Resolved once, and readable without running a task:
 #     bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
 # The switch derives from it, so the decision has exactly one evaluation point.
@@ -248,7 +250,7 @@ BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
 
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_IPC_32BIT=${@'ON' if d.getVar('BINDER_PROTOCOL_RESOLVED') == '7' else 'OFF'} \
+    -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
     ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
 
@@ -350,7 +352,8 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
 | `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | `OFF` (protocol 8) on every toolchain | Must match the target kernel |
+| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
+| `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 

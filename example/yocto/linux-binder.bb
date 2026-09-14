@@ -100,10 +100,11 @@ def binder_protocol_source(d):
 #   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
 #                     reports 32 for a lib32- multilib variant and 64 for the
 #                     base recipe, so both roles build from one expression.
-#   BINDER_IPC_32BIT  the wire protocol, which follows the KERNEL. Protocol 8 is
-#                     the default; deriving it anyway turns a platform drifting
-#                     back to protocol 7 into a build failure rather than a boot
-#                     failure.
+#   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
+#                     Protocol 8 is the default; deriving it anyway turns a
+#                     platform drifting back to protocol 7 into a build failure
+#                     rather than a boot failure. BINDER_IPC_32BIT is the old
+#                     spelling of the same switch and still works.
 # Resolved once, and readable without running a task:
 #     bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
 # The switch derives from it, so the decision has exactly one evaluation point.
@@ -112,7 +113,7 @@ BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
 
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_IPC_32BIT=${@'ON' if d.getVar('BINDER_PROTOCOL_RESOLVED') == '7' else 'OFF'} \
+    -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
     ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
 "
 

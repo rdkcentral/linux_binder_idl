@@ -497,6 +497,27 @@ test_2_6() {
         print_pass "LIB64 + IPC32=ON is refused at configure time"
     fi
 
+    # BINDER_PROTOCOL is the switch; BINDER_IPC_32BIT is the old spelling and
+    # must keep working, because integrator recipes already use it. Both are
+    # pinned here so neither can drift: an alias that stops aliasing changes
+    # the protocol of every build that still uses the old name.
+    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DTARGET_LIB64_VERSION=ON \
+        && configure_selected 64bit 8; then
+        print_pass "BINDER_PROTOCOL=8 selects protocol 8"
+    else
+        print_fail "BINDER_PROTOCOL=8 did not select protocol 8"
+    fi
+    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DBINDER_IPC_32BIT=ON; then
+        print_fail "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing was accepted"
+    else
+        print_pass "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing is refused"
+    fi
+    if probe_switches "$d" -DBINDER_PROTOCOL=9; then
+        print_fail "BINDER_PROTOCOL=9 was accepted; only 7 and 8 exist"
+    else
+        print_pass "BINDER_PROTOCOL=9 is refused rather than rounded to a protocol"
+    fi
+
     # The same default on the native 64-bit toolchain, so #72 is pinned on both
     # and not only where it changed.
     if probe_switches "$d" && configure_selected 64bit 8; then

@@ -219,51 +219,96 @@ if (TARGET_LIB64_VERSION)
     set(TARGET_LIB32_VERSION OFF)
 endif ()
 
-# Binder wire protocol vs compile bitness (linux_binder_idl#42, #72).
-# The binder protocol version is a DIFFERENT axis from the ELF compile bitness:
-#   - protocol 8 (unset, 64-bit handles) — the protocol. Every 64-bit kernel
-#     serves it, every kernel from 4.18 serves it, and a 32-bit userspace runs
-#     it perfectly well: it needs 64-bit FIELDS, not a 64-bit anything.
-#   - protocol 7 (BINDER_IPC_32BIT=1, 32-bit handles) — legacy compatibility,
-#     reachable only on a 32-bit kernel at 4.17 or older whose Kconfig still
-#     carries CONFIG_ANDROID_BINDER_IPC_32BIT.
+# Binder wire protocol vs compile bitness (linux_binder_idl#42, #72, #75).
 #
-# Default: protocol 8, on every toolchain. Bitness cannot select the protocol —
+# BINDER_PROTOCOL is the switch: 7 or 8. It says what it means, and it does not
+# invert.
+#
+#   8  the protocol. Every 64-bit kernel serves it, every kernel from 4.18
+#      serves it, and a 32-bit userspace runs it perfectly well - it needs
+#      64-bit FIELDS, not a 64-bit anything.
+#   7  legacy compatibility, reachable only on a 32-bit kernel at 4.17 or older
+#      whose Kconfig still carries CONFIG_ANDROID_BINDER_IPC_32BIT.
+#
+# BINDER_IPC_32BIT is the old spelling and still works. It is kept because it is
+# not our name: it is the kernel's Kconfig symbol AND the #ifdef in
+# linux/android/binder.h that selects binder_size_t's width, so the same string
+# greps across /proc/config.gz, a defconfig, this build and the compile line -
+# which is how a platform's protocol gets traced end to end. It reads backwards
+# though (=OFF means protocol 8), because it names the legacy mode rather than
+# the protocol, and "32BIT" refers to wire field width rather than the process.
+# That has misled people, hence the new name.
+#
+# Default: protocol 8, on every toolchain. Bitness cannot select the protocol -
 # the same 32-bit toolchain is correct at protocol 7 on a legacy kernel and
-# wrong at it everywhere else — so a toolchain-derived default is a guess that
+# wrong at it everywhere else - so a toolchain-derived default is a guess that
 # has to be wrong somewhere. Defaulting to 8 puts the silent answer where every
 # supported platform already is, and leaves the build that must state its switch
-# as the legacy one. A platform still on protocol 7 passes -DBINDER_IPC_32BIT=ON
-# explicitly; better still, derive it from the kernel's resolved .config, which
-# cannot be wrong either way (see BUILD.md).
-if (NOT DEFINED BINDER_IPC_32BIT)
+# as the legacy one.
+if (DEFINED BINDER_IPC_32BIT AND DEFINED BINDER_PROTOCOL)
+    # Both given. They must agree, or the caller believes two different things.
+    if (BINDER_IPC_32BIT)
+        set(_legacy_says 7)
+    else ()
+        set(_legacy_says 8)
+    endif ()
+    if (NOT "${BINDER_PROTOCOL}" STREQUAL "${_legacy_says}")
+        message(FATAL_ERROR
+            "BINDER_PROTOCOL=${BINDER_PROTOCOL} and BINDER_IPC_32BIT="
+            "${BINDER_IPC_32BIT} (protocol ${_legacy_says}) disagree. "
+            "BINDER_IPC_32BIT is the old spelling of the same switch; set one.")
+    endif ()
+elseif (DEFINED BINDER_IPC_32BIT)
+    # Old spelling only: honoured, so existing recipes keep working.
+    if (BINDER_IPC_32BIT)
+        set(BINDER_PROTOCOL 7)
+    else ()
+        set(BINDER_PROTOCOL 8)
+    endif ()
+elseif (NOT DEFINED BINDER_PROTOCOL)
+    set(BINDER_PROTOCOL 8)
+endif ()
+
+if (NOT "${BINDER_PROTOCOL}" STREQUAL "7" AND NOT "${BINDER_PROTOCOL}" STREQUAL "8")
+    # A typo must not become a protocol. Silently rounding to one is how a
+    # configuration mistake turns into a device that will not boot.
+    message(FATAL_ERROR
+        "BINDER_PROTOCOL is '${BINDER_PROTOCOL}'; the only binder wire "
+        "protocols are 7 and 8.")
+endif ()
+
+# The compile define keeps the kernel's name, because the UAPI header tests it.
+if ("${BINDER_PROTOCOL}" STREQUAL "7")
+    set(BINDER_IPC_32BIT ON)
+else ()
     set(BINDER_IPC_32BIT OFF)
 endif ()
-# Check the TOOLCHAIN first. TARGET_LIB32_VERSION adds no -m32 — the ELF class
-# comes from CC/CXX alone — so a declaration can disagree with the compiler it is
-# given, and only the compiler is ground truth. Under BINDER_IPC_32BIT the UAPI
-# narrows binder_uintptr_t to 32 bits, so a 64-bit pointer model truncates its
-# handles, and no 64-bit kernel serves protocol 7 in any case
-# (drivers/android/Kconfig marks CONFIG_ANDROID_BINDER_IPC_32BIT `depends on
-# !64BIT`). This guard runs before the declared-flag one below so the diagnostic
-# names the real cause rather than a declaration the caller may not have set.
+
+# Check the TOOLCHAIN first. TARGET_LIB32_VERSION adds no -m32 - the ELF class
+# comes from CC/CXX alone - so a declaration can disagree with the compiler it is
+# given, and only the compiler is ground truth. At protocol 7 the UAPI narrows
+# binder_uintptr_t to 32 bits, so a 64-bit pointer model truncates its handles,
+# and no 64-bit kernel serves protocol 7 in any case (drivers/android/Kconfig
+# marks CONFIG_ANDROID_BINDER_IPC_32BIT `depends on !64BIT`). This guard runs
+# before the declared-flag one below so the diagnostic names the real cause
+# rather than a declaration the caller may not have set.
 if (BINDER_IPC_32BIT AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR
-        "BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain "
+        "BINDER_PROTOCOL=7 with a 64-bit toolchain "
         "(CMAKE_SIZEOF_VOID_P=${CMAKE_SIZEOF_VOID_P}). Protocol 7 carries 32-bit "
         "binder handles and cannot represent 64-bit pointers, and no 64-bit kernel "
         "serves it. Either cross-compile with a 32-bit toolchain, or select "
-        "protocol 8 with -DBINDER_IPC_32BIT=OFF.")
+        "protocol 8 with -DBINDER_PROTOCOL=8.")
 endif ()
 # Declared-flag consistency. Reachable only on a 32-bit toolchain (the guard
 # above has already rejected 64-bit), so this catches a caller who asked for
 # protocol 7 while declaring a 64-bit target.
 if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
     message(FATAL_ERROR
-        "BINDER_IPC_32BIT=ON (protocol 7) requires a 32-bit target, but "
+        "BINDER_PROTOCOL=7 requires a 32-bit target, but "
         "TARGET_LIB32_VERSION is OFF. Declare the bitness the toolchain actually "
         "has (-DTARGET_LIB32_VERSION=ON), or select protocol 8 with "
-        "-DBINDER_IPC_32BIT=OFF.")
+        "-DBINDER_PROTOCOL=8.")
 endif ()
 
 ###########################################################
