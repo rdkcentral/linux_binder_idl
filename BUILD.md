@@ -91,7 +91,7 @@ export CXX=arm-linux-gnueabihf-g++
 export CFLAGS="--sysroot=/path/to/sysroot -march=armv7-a -mfpu=neon"
 export CXXFLAGS="--sysroot=/path/to/sysroot -march=armv7-a -mfpu=neon"
 export LDFLAGS="--sysroot=/path/to/sysroot"
-export TARGET_LIB32_VERSION=ON  # For 32-bit ARM
+export TARGET_BITNESS=32            # or the old TARGET_LIB32_VERSION=ON
 ./build-linux-binder-aidl.sh
 ```
 
@@ -149,7 +149,7 @@ export CXX=arm-linux-gnueabihf-g++
 export CFLAGS="--sysroot=/opt/poky/sysroots/armv7ahf-neon -march=armv7-a"
 export CXXFLAGS="--sysroot=/opt/poky/sysroots/armv7ahf-neon -march=armv7-a"
 export LDFLAGS="--sysroot=/opt/poky/sysroots/armv7ahf-neon"
-export TARGET_LIB32_VERSION=ON
+export TARGET_BITNESS=32
 ./build-linux-binder-aidl.sh
 ```
 
@@ -284,9 +284,9 @@ so it serves one protocol, and every role on the device speaks that one.
 
 | | The kernel it matches | Switches |
 | --- | ------ | -------- |
-| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
-| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
-| **C** — 64-bit userspace | any 64-bit kernel | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=7` |
+| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` |
+| **C** — 64-bit userspace | any 64-bit kernel | `-DTARGET_BITNESS=64 -DBINDER_PROTOCOL=8` |
 
 **The kernel version does not decide the row — its config does.** Being 32-bit
 at 4.17 or older is what makes protocol 7 *possible*; it is not what makes it
@@ -475,52 +475,105 @@ skip.
 
 #### Complete CMake Invocation Examples (Yocto/Production)
 
-These examples show **direct CMake usage for production build systems** (Yocto/BitBake) targeting ARM embedded devices. For development/testing, use the wrapper scripts instead (see below).
+The binder is a plain CMake project. A production build system calls CMake
+directly and states its switches; the wrapper scripts are a developer
+convenience and are not used in a recipe.
 
-**Yocto/Production: Target Build (64-bit ARM - aarch64):**
+**What each definition means**
+
+| Definition | Values | What it does |
+| ---------- | ------ | ------------ |
+| `-DBUILD_HOST_AIDL` | `ON` / `OFF` | Build the host AIDL compiler. `OFF` for anything that ships: the compiler runs on a build host to generate C++ offline, and no target image carries it. Leaving it `ON` also pulls in flex and bison. |
+| `-DTARGET_BITNESS` | `32` / `64` | **Declares** the ELF class of the library. It does **not** select it — nothing here adds `-m32`/`-m64`, the class comes from `CC`/`CXX`. The build stops if the declaration and the compiler disagree. Omit it and it follows the compiler. |
+| `-DBINDER_PROTOCOL` | `7` / `8` | The binder **wire protocol**, which is a property of the **kernel**, not of the build. `8` unless the target kernel is 32-bit at 4.17 or older with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`. Getting this wrong builds and links cleanly, then terminates every binder process at startup. |
+| `-DCMAKE_INSTALL_PREFIX` | path | Where `cmake --install` stages the result. |
+| `-DCMAKE_BUILD_TYPE` | `Release` / `Debug` | Standard CMake. |
+
+Two of those are commonly confused, so stated plainly:
+
+- **Bitness and protocol are independent.** A 32-bit userspace runs protocol 8
+  perfectly well — protocol 8 needs 64-bit *fields*, not a 64-bit anything. So
+  `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` is not a contradiction; it is the
+  most common configuration there is.
+- **The protocol follows the kernel, the bitness follows the toolchain.**
+  Neither is a free choice, and neither can be derived from the other.
+
+The older spellings `-DTARGET_LIB32_VERSION=ON` / `-DTARGET_LIB64_VERSION=ON`
+and `-DBINDER_IPC_32BIT=ON|OFF` still work. `BINDER_IPC_32BIT` is the kernel's
+own symbol name, and `=OFF` means protocol 8 — it names the legacy mode rather
+than the protocol, which is why the clearer spellings above are preferred.
+
+**32-bit ARM target (armhf), protocol 8 — the common case:**
 
 ```bash
-# Direct CMake invocation for Yocto/BitBake recipes targeting aarch64 devices
-cmake -S . -B build-target \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-    -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-    -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_LIB64_VERSION=ON \
-    -DCMAKE_INSTALL_PREFIX=/usr/local
-
-cmake --build build-target -j$(nproc)
-cmake --install build-target
-```
-
-**Non-Yocto note:** If you run direct CMake builds outside Yocto and have AIDL
-code generation enabled, ensure `out/host/bin/aidl` exists (run
-`./build-aidl-generator-tool.sh` first).
-
-**Yocto/Production: Target Build (32-bit ARM - armhf):**
-
-```bash
-# Direct CMake invocation for Yocto/BitBake recipes with cross-compilation
-# Use case: 32-bit userspace on 64-bit kernel (common in embedded systems)
 cmake -S . -B build-target \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
     -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_LIB32_VERSION=ON \
-    -DBINDER_IPC_32BIT=OFF \
+    -DTARGET_BITNESS=32 \
+    -DBINDER_PROTOCOL=8 \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
 cmake --build build-target -j$(nproc)
 cmake --install build-target
 ```
 
-**Note:** `-DBINDER_IPC_32BIT=OFF` gives protocol 8, which is what a 64-bit kernel serves. Drop it (or pass `=ON`) only for a 32-bit kernel built with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`.
+Covers a 32-bit kernel from 4.18, a 32-bit kernel that has opted out of the
+legacy option, and 32-bit userspace on any 64-bit kernel.
 
-**Direct CMake: Build AIDL Compiler (Architecture Team - Advanced Use Only):**
+**64-bit ARM target (aarch64):**
 
 ```bash
-# Direct CMake invocation (advanced - most users should use wrapper script below)
+cmake -S . -B build-target \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+    -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+    -DBUILD_HOST_AIDL=OFF \
+    -DTARGET_BITNESS=64 \
+    -DBINDER_PROTOCOL=8 \
+    -DCMAKE_INSTALL_PREFIX=/usr/local
+
+cmake --build build-target -j$(nproc)
+cmake --install build-target
+```
+
+A 64-bit kernel cannot serve protocol 7, so `8` is the only valid value here and
+the build refuses `7`.
+
+**Legacy 32-bit platform, protocol 7:**
+
+```bash
+cmake -S . -B build-target \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+    -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+    -DBUILD_HOST_AIDL=OFF \
+    -DTARGET_BITNESS=32 \
+    -DBINDER_PROTOCOL=7 \
+    -DCMAKE_INSTALL_PREFIX=/usr/local
+```
+
+Only for a 32-bit kernel at 4.17 or older whose resolved `.config` has
+`CONFIG_ANDROID_BINDER_IPC_32BIT=y`. Confirm with
+`zcat /proc/config.gz | grep ANDROID_BINDER_IPC_32BIT` on the device, or read
+the kernel build's `.config` — never the defconfig, which can request a symbol
+the kernel no longer has and have the request dropped silently.
+
+**Check what you built**, rather than what you asked for. The protocol is
+compiled into the library, and `Parcel::ipcSetDataReference` takes a
+`const binder_size_t*` whose width the protocol selects, so the mangled third
+parameter names it:
+
+```bash
+grep -ao 'ipcSetDataReferenceEPKh[jm]PK[yj]' <prefix>/lib/libbinder.so | sort -u
+#   ...PKy  ->  protocol 8
+#   ...PKj  ->  protocol 7
+```
+
+**Host AIDL compiler (architecture team only):**
+
+```bash
 cmake -S . -B build-host \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_HOST_AIDL=ON \
@@ -530,7 +583,11 @@ cmake --build build-host -j$(nproc)
 cmake --install build-host
 ```
 
-**Note:** Architecture team members should typically use `./build-aidl-generator-tool.sh` instead. The architecture team works **outside** the production build system (Yocto/BitBake) - they build the AIDL compiler locally to generate interface code and manage interface versions. This direct CMake example is only for advanced users who need custom configuration.
+Generates interface C++ offline; the result is committed and never shipped.
+`./build-aidl-generator-tool.sh` does the same thing with less to remember.
+
+**Non-Yocto note:** for a direct build with AIDL generation enabled, ensure
+`out/host/bin/aidl` exists first (`./build-aidl-generator-tool.sh`).
 
 #### Minimal Required Variables Summary
 
@@ -701,7 +758,7 @@ Binder driver protocol(7) does not match user space protocol(8)!
 | Platform | MW | Vendor | Protocol | Build | Kernel |
 | --- | --- | --- | --- | --- | --- |
 | All-32-bit userspace | 32-bit | 32-bit | 7 | no flags needed — a 32-bit toolchain defaults `BINDER_IPC_32BIT=ON` | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
-| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
+| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 | All-64-bit userspace | 64-bit | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 
 Both defaults come from the toolchain's pointer size, not from each other: a
