@@ -51,13 +51,24 @@ echo "Checking the reference recipe..."
 pass "example/yocto/linux-binder.bb exists"
 
 # 1. All three switches stated.
-for sw in "-DBUILD_HOST_AIDL=OFF" "-DBINDER_IPC_32BIT=" "TARGET_LIB32_VERSION=ON"; do
+for sw in "-DBUILD_HOST_AIDL=OFF" "TARGET_LIB32_VERSION=ON"; do
     if grep -qF -- "${sw}" "${RECIPE}"; then
         pass "states ${sw}"
     else
         fail "does not state ${sw} - a recipe that omits a switch inherits a default"
     fi
 done
+
+# The protocol switch, under either spelling. BINDER_PROTOCOL is the one to
+# write; BINDER_IPC_32BIT is the kernel's own name, still honoured, and reads
+# backwards - so the reference recipe should be showing the clearer one.
+if grep -qF -- "-DBINDER_PROTOCOL=" "${RECIPE}"; then
+    pass "states -DBINDER_PROTOCOL= (the switch that does not invert)"
+elif grep -qF -- "-DBINDER_IPC_32BIT=" "${RECIPE}"; then
+    fail "states only the legacy -DBINDER_IPC_32BIT=; the reference should show -DBINDER_PROTOCOL="
+else
+    fail "states no protocol switch - a recipe that omits it inherits a default"
+fi
 
 # 2. The decision is reportable: a variable bitbake -e can read without running
 #    a task, and a line in the task log a matrix run can grep.
