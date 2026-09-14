@@ -1,6 +1,3 @@
-# Copyright 2026 RDK Management
-# SPDX-License-Identifier: Apache-2.0
-#
 # servicemanager owns the binder context. Every binder process resolves names
 # through it, so nothing that uses binder can start before it has registered as
 # the context manager.

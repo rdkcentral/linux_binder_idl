@@ -90,15 +90,41 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 # honoured so recipes already using them keep building. Fold the old names into
 # the new ones here, before anything else reads them, and use only the new ones
 # from this point on.
-if [ -z "${TARGET_BITNESS:-}" ]; then
-  if [ "${TARGET_LIB64_VERSION:-}" = "ON" ]; then
-    TARGET_BITNESS=64
-  elif [ -n "${TARGET_LIB32_VERSION:-}" ]; then
-    case "${TARGET_LIB32_VERSION}" in
-      ON)  TARGET_BITNESS=32 ;;
-      OFF) TARGET_BITNESS=64 ;;
-    esac
-  fi
+#
+# Disagreement is fatal, and it has to be caught HERE. The configure step clears
+# the deprecated names from the CMake cache before invoking it, so CMake never
+# sees them and its own disagreement guards cannot fire. Without these checks the
+# wrapper would silently accept exactly what direct CMake rejects — and a
+# half-converted recipe would build the opposite of one of the two things it
+# asked for.
+
+# Bitness. The two legacy booleans are one choice, so they must not both be ON,
+# and whatever they resolve to must match TARGET_BITNESS if that is set too.
+_legacy_bits=""
+if [ "${TARGET_LIB32_VERSION:-}" = "ON" ] && [ "${TARGET_LIB64_VERSION:-}" = "ON" ]; then
+  echo "ERROR: TARGET_LIB32_VERSION and TARGET_LIB64_VERSION are both ON. They are" >&2
+  echo "       two spellings of one choice; set TARGET_BITNESS=32 or TARGET_BITNESS=64." >&2
+  exit 1
+fi
+if [ "${TARGET_LIB64_VERSION:-}" = "ON" ]; then
+  _legacy_bits=64
+elif [ -n "${TARGET_LIB32_VERSION:-}" ]; then
+  case "${TARGET_LIB32_VERSION}" in
+    ON)  _legacy_bits=32 ;;
+    OFF) _legacy_bits=64 ;;
+    *)   echo "ERROR: TARGET_LIB32_VERSION is '${TARGET_LIB32_VERSION}'; it must be ON or OFF." >&2
+         exit 1 ;;
+  esac
+fi
+if [ -n "${TARGET_BITNESS:-}" ] && [ -n "${_legacy_bits}" ] \
+   && [ "${TARGET_BITNESS}" != "${_legacy_bits}" ]; then
+  echo "ERROR: TARGET_BITNESS=${TARGET_BITNESS} and TARGET_LIB32_VERSION/TARGET_LIB64_VERSION" >&2
+  echo "       (${_legacy_bits}-bit) disagree. The TARGET_LIB*_VERSION pair is the old" >&2
+  echo "       spelling of the same switch; set one." >&2
+  exit 1
+fi
+if [ -z "${TARGET_BITNESS:-}" ] && [ -n "${_legacy_bits}" ]; then
+  TARGET_BITNESS="${_legacy_bits}"
 fi
 if [ -n "${TARGET_BITNESS:-}" ]; then
   case "${TARGET_BITNESS}" in
@@ -108,11 +134,25 @@ if [ -n "${TARGET_BITNESS:-}" ]; then
   esac
 fi
 
-if [ -z "${BINDER_PROTOCOL:-}" ] && [ -n "${BINDER_IPC_32BIT:-}" ]; then
+# Protocol, under the same rule.
+_legacy_proto=""
+if [ -n "${BINDER_IPC_32BIT:-}" ]; then
   case "${BINDER_IPC_32BIT}" in
-    ON)  BINDER_PROTOCOL=7 ;;
-    OFF) BINDER_PROTOCOL=8 ;;
+    ON)  _legacy_proto=7 ;;
+    OFF) _legacy_proto=8 ;;
+    *)   echo "ERROR: BINDER_IPC_32BIT is '${BINDER_IPC_32BIT}'; it must be ON or OFF." >&2
+         exit 1 ;;
   esac
+fi
+if [ -n "${BINDER_PROTOCOL:-}" ] && [ -n "${_legacy_proto}" ] \
+   && [ "${BINDER_PROTOCOL}" != "${_legacy_proto}" ]; then
+  echo "ERROR: BINDER_PROTOCOL=${BINDER_PROTOCOL} and BINDER_IPC_32BIT=${BINDER_IPC_32BIT}" >&2
+  echo "       (protocol ${_legacy_proto}) disagree. BINDER_IPC_32BIT is the old spelling" >&2
+  echo "       of the same switch; set one." >&2
+  exit 1
+fi
+if [ -z "${BINDER_PROTOCOL:-}" ] && [ -n "${_legacy_proto}" ]; then
+  BINDER_PROTOCOL="${_legacy_proto}"
 fi
 if [ -n "${BINDER_PROTOCOL:-}" ]; then
   case "${BINDER_PROTOCOL}" in
