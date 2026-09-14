@@ -135,7 +135,14 @@ fi
 # 4. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
 #    must appear in the recipe; the recipe may carry more (its licence header,
 #    SRC_URI, systemd) than the doc chooses to show.
-BLOCK="$(awk '/^```bitbake$/{f=1;next} /^```$/{f=0} f' "${BUILD_MD}")"
+#
+#    Only the FIRST bitbake block, which is the reference recipe. BUILD.md has a
+#    second one - the two-line `require binder-protocol-from-kernel.inc` snippet
+#    - and collecting both made this check demand lines the recipe is not
+#    supposed to contain. It passed anyway, because the recipe carries that
+#    snippet as a COMMENT and grep -F matches inside it: a green result standing
+#    on commented-out text rather than on the recipe.
+BLOCK="$(awk '/^```bitbake$/{if(!seen){seen=1;f=1;next}} /^```$/{if(f)exit} f' "${BUILD_MD}")"
 if [ -z "${BLOCK}" ]; then
     fail "no bitbake block found in BUILD.md"
 else
