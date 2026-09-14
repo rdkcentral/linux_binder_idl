@@ -221,10 +221,13 @@ Development wrapper scripts (`build-*.sh`) automatically handle CMake variables.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `ON` |
-| `TARGET_LIB64_VERSION` | Declare a 64-bit target | follows the toolchain |
-| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
-| `BINDER_IPC_32BIT` | Binder wire protocol: `ON` = 7, `OFF` = 8 | follows the toolchain |
+| `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `OFF` |
+| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
+| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
+
+`BINDER_IPC_32BIT` and the `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` pair
+are the deprecated spellings of the last two. They still work; see
+[BUILD.md](BUILD.md#deprecated-spellings).
 
 **See [BUILD.md](BUILD.md) for:**
 
@@ -265,7 +268,7 @@ rm -rf out/ build-target/ build-host/
 
 ## Output
 
-The default generated binder libs are 64-bit. This can be modified using `TARGET_LIB64_VERSION` or `TARGET_LIB32_VERSION` CMake variables.
+The generated binder libs take their ELF class from `CC` / `CXX`, so a 64-bit host compiler produces 64-bit libraries and a 32-bit cross-toolchain produces 32-bit ones. `TARGET_BITNESS` asserts which was expected; it does not select it.
 
 **Target SDK** (libraries for embedded devices) are installed to `out/target/`:
 

@@ -55,9 +55,9 @@ There are exactly three kernels, and the matrix builds all three:
 
 | Variant | Guest | Kernel fragment | Userspace |
 | --- | --- | --- | --- |
-| protocol 8, 64-bit (default) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
-| protocol 8, 32-bit kernel | i386, kernel ≥ 4.18 | `kconfig/binder.fragment` (append `:i386`) | `-DBINDER_IPC_32BIT=OFF`, compiled `-m32` |
-| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32`) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
+| protocol 8, 64-bit (default) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_PROTOCOL=8` |
+| protocol 8, 32-bit kernel | i386, kernel ≥ 4.18 | `kconfig/binder.fragment` (append `:i386`) | `-DBINDER_PROTOCOL=8`, compiled `-m32` |
+| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32`) | `-DBINDER_PROTOCOL=7`, compiled `-m32` |
 
 The middle row is the one most platforms run: a 32-bit userspace on a modern
 binder driver. It is guarded to **4.18 and newer**, because a 32-bit kernel

@@ -128,7 +128,7 @@ change: give the symbol a prompt so it can be cleared, change its default, or dr
 what a BSP does implicitly when it backports a newer binder driver onto the older base. Both sides
 then move together, because libbinder compares for exact equality, so it is a coordinated kernel
 and userspace change rather than a rolling one. A platform that makes that move has one protocol
-for its whole life, and every build on it takes `BINDER_IPC_32BIT=OFF`.
+for its whole life, and every build on it takes `BINDER_PROTOCOL=8`.
 
 Read the kernel's resolved `.config`, not its `defconfig`. The defconfig is an input: config
 fragments and Kconfig defaults can set or clear the symbol without it appearing there. In a Yocto
@@ -211,7 +211,7 @@ concluding a legacy platform is stuck: protocol 8 needs 64-bit *fields*, not a 6
 An armv7l platform on a 4.9 kernel runs protocol 8 with a 32-bit userspace, one 32-bit
 `libbinder.so`, and no 64-bit process anywhere.
 
-**One protocol removes the switch as a decision.** With every platform on 8, `BINDER_IPC_32BIT` is
+**One protocol removes the switch as a decision.** With every platform on 8, `BINDER_PROTOCOL` is
 never chosen by anyone: the derivation reads the kernel and confirms what is already true, and its
 only remaining job is to fail the build if a platform ever drifts. The matrix in this document
 collapses to a single row.
@@ -340,7 +340,7 @@ Four consequences worth stating plainly:
 4.17 or older with the option set. On every other platform — including every 64-bit kernel — a
 32-bit middleware runs **protocol 8** over the kernel's compat path. Protocol 8 is the default on
 every toolchain, so a middleware build inherits the right protocol everywhere except the legacy
-platform, which states `-DBINDER_IPC_32BIT=ON` instead.
+platform, which states `-DBINDER_PROTOCOL=7` instead.
 
 **Nor does the kernel version imply it.** Being 32-bit at 4.17 or older is what makes protocol 7
 possible, not what makes it apply — the first two rows are the same kernel version with different
@@ -384,14 +384,14 @@ rows B and C are what a build inherits without asking, and only the legacy platf
 Bitness follows userspace;
 the protocol follows the kernel.
 
-State all three switches explicitly in a build spec rather than relying on defaults. The defaults
-follow the toolchain, so a spec that omits `BINDER_IPC_32BIT` means one thing for a 32-bit
-middleware build and another for a 64-bit vendor build.
+State the protocol explicitly in a build spec rather than relying on the default. `BINDER_PROTOCOL`
+defaults to 8, which is right on every supported platform and wrong on the legacy one — and a spec
+that says what it wants does not change meaning when a default does.
 
 `build-linux-binder-aidl.sh` takes the same names as environment variables:
 
 ```sh
-TARGET_LIB32_VERSION=ON BINDER_IPC_32BIT=OFF ./build-linux-binder-aidl.sh
+BINDER_PROTOCOL=8 ./build-linux-binder-aidl.sh
 ```
 
 ## Deriving the switches in a Yocto build
@@ -407,29 +407,31 @@ inherit cmake siteinfo
 # in scope. Without this the .config below is not staged yet.
 do_configure[depends] += "virtual/kernel:do_shared_workdir"
 
-def binder_ipc32(d):
+def binder_protocol(d):
     import os
     cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
     if not os.path.exists(cfg):
         bb.fatal("linux-binder: no kernel .config at %s, so the binder wire "
-                 "protocol cannot be determined. Set BINDER_IPC_32BIT explicitly "
+                 "protocol cannot be determined. Set BINDER_PROTOCOL explicitly "
                  "for this build." % cfg)
     with open(cfg) as f:
         for line in f:
             if line.strip() == 'CONFIG_ANDROID_BINDER_IPC_32BIT=y':
-                return 'ON'          # protocol 7
+                return '7'
     # Both "# CONFIG_... is not set" and outright absence mean protocol 8.
-    return 'OFF'
+    return '8'
 
-# SITEINFO_BITS is the word size of the target this recipe is being built for,
-# which is what decides the ELF class. In a multilib build the lib32- variant
-# reports 32 and the base recipe reports 64, so each gets the right answer from
-# the same expression.
+# The ELF class is not stated: it comes from the cross-toolchain this recipe is
+# built with. In a multilib build the lib32- variant already has a 32-bit
+# compiler and the base recipe a 64-bit one, so each produces the right library
+# without a switch.
 EXTRA_OECMAKE += "\
-    -DBINDER_IPC_32BIT=${@binder_ipc32(d)} \
-    ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
+    -DBINDER_PROTOCOL=${@binder_protocol(d)} \
 "
 ```
+
+`example/yocto/binder-protocol-from-kernel.inc` ships this as a file, exposing
+the answer as `BINDER_PROTOCOL_RESOLVED`.
 
 Read the resolved `.config`, never the `defconfig` — see above for why. Fail the build when no
 kernel is in scope rather than defaulting: a guessed protocol builds and links, then terminates
@@ -439,25 +441,25 @@ the process on the device.
 
 One expression, but it produces a different answer per role. Find the row you are building:
 
-| Your layer | `SITEINFO_BITS` | Bitness switch | Protocol switch |
-| --- | --- | --- | --- |
-| 32-bit userspace — middleware, or vendor on a 32-bit platform | `32` | `-DTARGET_LIB32_VERSION=ON` | from the kernel: `ON` only for a 32-bit kernel ≤ 4.17 with the option set, `OFF` otherwise |
-| 64-bit userspace — vendor on a 64-bit platform | `64` | `-DTARGET_LIB64_VERSION=ON` | always `OFF` |
+| Your layer | ELF class | Protocol switch |
+| --- | --- | --- |
+| 32-bit userspace — middleware, or vendor on a 32-bit platform | from the 32-bit cross-toolchain | from the kernel: `-DBINDER_PROTOCOL=7` only for a 32-bit kernel ≤ 4.17 with the option set, `8` otherwise |
+| 64-bit userspace — vendor on a 64-bit platform | from the 64-bit cross-toolchain | always `-DBINDER_PROTOCOL=8` |
 
-**If you are a 32-bit layer, this is the row to get right.** A 32-bit toolchain defaults to
-protocol 7, so on a protocol-8 kernel — which is every 64-bit kernel and every kernel from 4.18 —
-the build must end up at `BINDER_IPC_32BIT=OFF`. Deriving from the kernel gives you that; hardcoding
-`ON` because the layer is 32-bit is the mistake that produces the boot failure. In OE this layer is
+**If you are a 32-bit layer, this is the row to get right.** Being 32-bit says nothing about the
+protocol: on a protocol-8 kernel — which is every 64-bit kernel and every kernel from 4.18 — the
+build must end up at `-DBINDER_PROTOCOL=8`. Deriving from the kernel gives you that; hardcoding `7`
+because the layer is 32-bit is the mistake that produces the boot failure. In OE this layer is
 usually the `lib32-` multilib variant, and it is the one that has a genuine choice to get wrong.
 
 **If you are a 64-bit layer, the protocol is not a decision.** A 64-bit kernel cannot serve
-protocol 7 — the Kconfig option is `depends on !64BIT` — so the answer is always `OFF`, and the
-build refuses `-DBINDER_IPC_32BIT=ON` against a 64-bit toolchain rather than letting it through.
+protocol 7 — the Kconfig option is `depends on !64BIT` — so the answer is always `8`, and the
+build refuses `-DBINDER_PROTOCOL=7` against a 64-bit toolchain rather than letting it through.
 The derivation cannot produce a wrong answer here.
 
 On a 64-bit platform carrying 32-bit middleware, both rows apply: the recipe is built twice, as
-`linux-binder` and as `lib32-linux-binder`. `binder_ipc32()` returns `OFF` for both, because there
-is one kernel serving one protocol, while `SITEINFO_BITS` differs and selects each one's ELF class.
+`linux-binder` and as `lib32-linux-binder`. `binder_protocol()` returns `8` for both, because there
+is one kernel serving one protocol, while each variant's toolchain selects its own ELF class.
 That is the mixed configuration, expressed without a per-platform override.
 
 The library's own guards catch a contradiction that slips through: a declared bitness that
@@ -468,12 +470,36 @@ time rather than becoming a runtime failure.
 
 | Flags | Toolchain | Reason |
 | --- | --- | --- |
-| `-DBINDER_IPC_32BIT=ON` | 64-bit | protocol 7 carries 32-bit binder handles and cannot represent 64-bit pointers, and no 64-bit kernel serves it |
-| `-DTARGET_LIB32_VERSION=OFF` | 32-bit | the declared bitness contradicts the compiler |
-| `-DTARGET_LIB64_VERSION=ON` | 32-bit | the declared bitness contradicts the compiler |
+| `-DBINDER_PROTOCOL=7` | 64-bit | protocol 7 carries 32-bit binder handles and cannot represent 64-bit pointers, and no 64-bit kernel serves it |
+| `-DTARGET_BITNESS=64` | 32-bit | the declared bitness contradicts the compiler |
+| `-DTARGET_BITNESS=32` | 64-bit | the declared bitness contradicts the compiler |
+| `-DBINDER_PROTOCOL=6` (or any value but 7 or 8) | any | a typo must not become a protocol |
+| `-DBINDER_PROTOCOL` and `-DBINDER_IPC_32BIT` disagreeing | any | they are two spellings of one switch, and the caller believes two different things |
 
-`TARGET_LIB32_VERSION` and `TARGET_LIB64_VERSION` add no `-m32` / `-m64`: the ELF class comes from
-`CC`/`CXX` alone, so the declaration has to agree with the toolchain it is given.
+`TARGET_BITNESS` adds no `-m32` / `-m64`: the ELF class comes from `CC`/`CXX`
+alone, so the declaration has to agree with the toolchain it is given.
+
+### Deprecated switch spellings
+
+Both switches have an older name, still honoured so an existing recipe keeps
+working. New builds and documentation use the current ones.
+
+| Deprecated | Write instead |
+| --- | --- |
+| `-DBINDER_IPC_32BIT=ON` | `-DBINDER_PROTOCOL=7` |
+| `-DBINDER_IPC_32BIT=OFF` | `-DBINDER_PROTOCOL=8` |
+| `-DTARGET_LIB32_VERSION=ON` | `-DTARGET_BITNESS=32` |
+| `-DTARGET_LIB64_VERSION=ON` | `-DTARGET_BITNESS=64` |
+
+`BINDER_IPC_32BIT` reads backwards — `OFF` means protocol 8 — because it names
+the legacy mode rather than the protocol, and its "32BIT" is the wire field
+width rather than the process. The `TARGET_LIB*_VERSION` pair is two booleans
+for one binary fact, so they can contradict each other.
+
+The name survives outside the build switch and is not deprecated there: it is
+the kernel's Kconfig symbol `CONFIG_ANDROID_BINDER_IPC_32BIT` and the `#ifdef`
+in `linux/android/binder.h` that sets `binder_size_t`'s width, which is how a
+platform's protocol is traced end to end.
 
 ## Verification
 
@@ -525,9 +551,12 @@ rows use, booted against a 64-bit kernel, so the pairing costs a boot rather tha
 Protocol 8 is the default on every toolchain, so derivation cannot reach protocol 7 — which is
 deliberate: bitness cannot select the protocol, so a derived default has to be wrong somewhere, and
 the rare, shrinking case is the one that should have to state its switch. Every other derived row
-now simply passes. The harness asserts the legacy mismatch rather than reporting it as a failure,
-and fails hard if derivation ever reaches protocol 7 on its own, because that would mean this
-guidance had gone stale.
+now simply passes. That row is **booted**, not merely asserted: the derived protocol-8 userspace
+goes onto the protocol-7 kernel and has to die in `ProcessState` with the driver's own message, and
+the row passes on that failure. A successful round-trip there is scored as a failure, because it
+would mean a protocol mismatch is no longer fatal and every claim in this document rests on the
+assumption that it is. The harness also fails hard if derivation ever reaches protocol 7 on its
+own, because that would mean this guidance had gone stale.
 
 The negative cases are the point of the harness. A protocol-8 userspace against the protocol-7
 kernel fails, reproducing the field error verbatim in the guest console. And a protocol-7 variant

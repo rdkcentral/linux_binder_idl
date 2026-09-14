@@ -149,8 +149,8 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 # Build the userspace for one variant. Sets VARIANT_INITRAMFS on success, or
 # VARIANT_SKIP with a reason when the host can't produce it.
 #
-# With <derive> non-empty the build is invoked WITHOUT TARGET_LIB32_VERSION or
-# BINDER_IPC_32BIT, so it has to work both out from the toolchain — the path a
+# With <derive> non-empty the build is invoked WITHOUT TARGET_BITNESS or
+# BINDER_PROTOCOL, so it has to work both out from the toolchain — the path a
 # plain `./build-linux-binder-aidl.sh` takes. That derivation is what selects
 # the protocol for every integrator who does not pass the flags, so it is what
 # shipped the protocol-7-on-64-bit default (#54); the explicit variants below
@@ -162,14 +162,16 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then
         VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"
         VARIANT_DERIVED="${DERIVED_CACHE[${key}]:-}"
+        # A variant expected to mismatch still boots; carry the expectation over
+        # the cache hit so the second caller scores it the same way as the first.
+        [ -n "${EXPECTED_VARIANT[${key}]:-}" ] && { VARIANT_EXPECTED=1; VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; }
         return 0
     fi
-    if [ -n "${EXPECTED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1; return 1; fi
     if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
 
-    local mflag="" lib32=OFF ipc32=OFF
-    [ "${arch}" = "i386" ] && { mflag="-m32"; lib32=ON; }
-    [ "${proto}" = "7" ]  && { ipc32=ON; lib32=ON; }   # protocol 7 implies a 32-bit target
+    local mflag="" bits=64
+    [ "${arch}" = "i386" ] && { mflag="-m32"; bits=32; }
+    [ "${proto}" = "7" ]  && bits=32                   # protocol 7 implies a 32-bit target
 
     # Protocol 7 only exists on a 32-bit kernel, so a protocol-7 guest is i386.
     # Anything else is a mislabelled kernel, and building for it would produce
@@ -200,7 +202,7 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
 
     local sdk_out="${WORK}/sdk-${key}" sdk_build="${WORK}/build-${key}"
     # Derived runs pass neither flag; the toolchain in CC/CXX is the only input.
-    local -a proto_env=(TARGET_LIB32_VERSION="${lib32}" BINDER_IPC_32BIT="${ipc32}")
+    local -a proto_env=(TARGET_BITNESS="${bits}" BINDER_PROTOCOL="${proto}")
     [ -n "${derive}" ] && proto_env=()
     echo "  building ${arch} protocol-${proto} binder SDK${derive:+ (derived from the toolchain)} ..."
     if ! (cd "${REPO_ROOT}" && \
@@ -218,7 +220,7 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     # and naming it at configure level makes the cause obvious in CI output.
     if [ -n "${derive}" ]; then
         # Read the build's own statement of what it selected. The CMake cache is
-        # not usable for this: BINDER_IPC_32BIT is a plain set(), so it lands in
+        # not usable for this: BINDER_PROTOCOL is a plain set(), so it lands in
         # the cache only when passed with -D — exactly what a derived run does
         # not do.
         local got_proto
@@ -228,24 +230,29 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
         # every toolchain (#72), because bitness cannot select the protocol and
         # a toolchain-derived default therefore has to be wrong somewhere. It is
         # wrong here, on the legacy kernel, and that is deliberate: the rare and
-        # shrinking case is the one that must state its switch. Assert it rather
-        # than report a build failure, and fail loudly if it ever stops being
-        # true, because the row A guidance would then be stale.
+        # shrinking case is the one that must state its switch.
+        #
+        # Mark the variant expected-to-mismatch and carry on building it. The
+        # boot is the point: it puts the field failure — `protocol(7) does not
+        # match user space protocol(8)` — in the guest console, which is the
+        # evidence PROTOCOL.md cites. Asserting the derived number alone would
+        # only restate what the build log already said.
         if [ "${proto}" = "7" ]; then
             if [ "${got_proto}" = "8" ]; then
                 VARIANT_DERIVED="8"; DERIVED_CACHE[${key}]="8"
-                EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_IPC_32BIT=ON"
+                EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_PROTOCOL=7"
                 VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
-                return 1
+                echo "    derived protocol 8 against a protocol-7 kernel — booting it to prove the mismatch"
+            else
+                fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
             fi
-            fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+        else
+            VARIANT_DERIVED="${got_proto}"; DERIVED_CACHE[${key}]="${got_proto}"
+            if [ "${got_proto}" != "${proto}" ]; then
+                fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
+            fi
+            echo "    derived protocol ${got_proto} matches the kernel"
         fi
-
-        VARIANT_DERIVED="${got_proto}"; DERIVED_CACHE[${key}]="${got_proto}"
-        if [ "${got_proto}" != "${proto}" ]; then
-            fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
-        fi
-        echo "    derived protocol ${got_proto} matches the kernel"
     fi
 
     local sdk_lib="${sdk_out}/lib" sdk_inc="" sm_bin="${sdk_out}/bin/servicemanager"
@@ -365,13 +372,34 @@ prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
 }
 
 # Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
-boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline]
-    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log" extra="${5:-}"
+#
+# With <expect> = mismatch the roles invert: this is the negative case, and the
+# boot is expected to die in ProcessState with the driver's protocol check. A
+# round-trip that succeeds there is the failure, because it would mean a
+# protocol-8 userspace now works against a protocol-7 kernel and every
+# protocol-mismatch claim in PROTOCOL.md and BUILD.md is wrong.
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline] [expect]
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log" extra="${5:-}" expect="${6:-}"
     timeout "${TIMEOUT}" "${qemu_bin}" \
         -m 512 -no-reboot -nographic \
         -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
         -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3${extra:+ ${extra}}" \
         >"${log}" 2>&1 || true
+
+    if [ "${expect}" = "mismatch" ]; then
+        if grep -q 'does not match user space protocol' "${log}"; then
+            echo "  PASS  ${vlabel}: $(grep -o '[^ ]*protocol([0-9]*) does not match user space protocol([0-9]*).*' "${log}" | head -n 1)"
+            PASS=$((PASS+1)); LAST_RESULT="PASS (expected mismatch)"
+        elif grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+            echo "  FAIL  ${vlabel}: the round-trip succeeded, so a protocol-8 userspace is no longer refused by a protocol-7 kernel — see ${log}"
+            FAIL=$((FAIL+1)); LAST_RESULT="FAIL (mismatch not detected)"
+        else
+            echo "  FAIL  ${vlabel}: the boot failed without the driver's protocol message — see ${log}"
+            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+            FAIL=$((FAIL+1)); LAST_RESULT="FAIL (wrong failure)"
+        fi
+        return
+    fi
 
     if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
         echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
@@ -413,21 +441,17 @@ for kimg in "${KERNELS_LIST[@]}"; do
     for mode in "" derive; do
         vlabel="${label}${mode:+ [derived]}"
         if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
-            if [ -n "${VARIANT_EXPECTED}" ]; then
-                # The derivation is wrong here by design, and proving it is the
-                # test. Booting it would only reproduce the mismatch the
-                # protocol-7-userspace negative case already covers.
-                echo "  PASS  ${vlabel}: ${VARIANT_SKIP}"; PASS=$((PASS+1))
-                row "${label}" "${arch}" "${proto}" "${arch}" "derived" "${VARIANT_DERIVED:--}" "PASS (expected mismatch)"
-            else
-                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
-                row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "-" "SKIP"
-            fi
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+            row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "-" "SKIP"
             continue
         fi
 
+        # The derivation is wrong on the protocol-7 kernel by design, so this
+        # variant is booted as the negative case: the mismatch has to appear in
+        # the guest console rather than be inferred from the build log.
+        expect=""; [ -n "${VARIANT_EXPECTED}" ] && { expect=mismatch; vlabel="${vlabel} [expected mismatch]"; }
         echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
-        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}"
+        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}" "" "${expect}"
         row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "${VARIANT_DERIVED:--}" "${LAST_RESULT}"
     done
 
