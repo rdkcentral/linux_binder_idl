@@ -293,8 +293,9 @@ above.
 
 **The kernel version does not decide the row — its config does.** Being 32-bit
 at 4.17 or older is what makes protocol 7 *possible*; it is not what makes it
-apply. The derivation in the recipe above reads the resolved `.config` for
-exactly this reason, and there are three states to read, not two:
+apply. `binder-protocol-from-kernel.inc` reads the resolved `.config` for
+exactly this reason — the recipe above states protocol 8 rather than deriving it
+— and there are three states to read, not two:
 
 | In the kernel config | Protocol | Row |
 | -------------------- | -------- | --- |
@@ -786,8 +787,8 @@ Read the kernel, then set the build flag to match it:
 
 | Kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | libbinder build | Protocol |
 | --- | --- | --- | --- |
-| 32-bit, ≤ 4.17 | `=y` | `-DBINDER_PROTOCOL=7` | 7 |
-| 32-bit, ≤ 4.17 | unset | `-DBINDER_PROTOCOL=8` | 8 |
+| 32-bit, ≤ 4.17 | `=y` — the stock default | `-DBINDER_PROTOCOL=7` | 7 |
+| 32-bit, ≤ 4.17 | unset or absent, which takes a **Kconfig change**, not a defconfig line | `-DBINDER_PROTOCOL=8` | 8 |
 | 64-bit, any version | unselectable (`depends on !64BIT`) | `-DBINDER_PROTOCOL=8` | 8 |
 | any, ≥ 4.18 | option removed | `-DBINDER_PROTOCOL=8` | 8 |
 

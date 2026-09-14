@@ -38,8 +38,11 @@
 BINDER_PROTOCOL ?= ""
 
 # The protocol comes from the kernel, so the recipe needs the configured kernel
-# in scope to read it.
-do_configure[depends] += "virtual/kernel:do_shared_workdir"
+# in scope to read it - EXCEPT when the caller has declared BINDER_PROTOCOL for a
+# build with no kernel at all (an SDK). Depending on virtual/kernel there would
+# either pull a kernel in needlessly or fail to resolve where no kernel provider
+# exists, which is exactly the case that declaration is for.
+do_configure[depends] += "${@'virtual/kernel:do_shared_workdir' if not (d.getVar('BINDER_PROTOCOL') or '') else ''}"
 
 def binder_protocol(d):
     """Return the wire protocol this build must speak: '7' or '8'."""
@@ -85,9 +88,12 @@ def binder_protocol_source(d):
     cfg = os.path.join(kbuild, '.config') if kbuild else ''
     return "kernel:%s" % cfg if cfg and os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
 
-# Three switches, all stated rather than inherited.
-#
-#   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
+# The answer, and where it came from. Assigned unconditionally, NOT with ?=: a
+# value pre-set by a distro, machine or local.conf would otherwise win and the
+# kernel would never be read - silently turning the one thing this file exists
+# to do, failing the build when a kernel drifts, back into a hardcoded guess. A
+# caller who means to declare the protocol sets BINDER_PROTOCOL, which is
+# checked against the kernel rather than bypassing it.
 
-BINDER_PROTOCOL_RESOLVED ?= "${@binder_protocol(d)}"
-BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
+BINDER_PROTOCOL_RESOLVED = "${@binder_protocol(d)}"
+BINDER_PROTOCOL_SOURCE   = "${@binder_protocol_source(d)}"
