@@ -52,40 +52,54 @@ echo "Checking the reference recipe..."
 [ -f "${RECIPE}" ] || { fail "example/yocto/linux-binder.bb is missing"; exit 1; }
 pass "example/yocto/linux-binder.bb exists"
 
-# 1. All three switches stated.
+# 1. What the recipe actually PASSES, which is the EXTRA_OECMAKE assignment and
+#    nothing else. Scanning the whole file would let the explanatory comments
+#    satisfy these checks - the comments name every switch, including ones the
+#    recipe deliberately does not pass - and a green result would then say
+#    nothing about the recipe.
+SWITCHES="$(sed -n '/^EXTRA_OECMAKE/,/^"/p' "${RECIPE}")"
+[ -n "${SWITCHES}" ] || { fail "no EXTRA_OECMAKE block in the reference recipe"; exit 1; }
+
 for sw in "-DBUILD_HOST_AIDL=OFF"; do
-    if grep -qF -- "${sw}" "${RECIPE}"; then
-        pass "states ${sw}"
+    if printf '%s\n' "${SWITCHES}" | grep -qF -- "${sw}"; then
+        pass "passes ${sw}"
     else
-        fail "does not state ${sw} - a recipe that omits a switch inherits a default"
+        fail "does not pass ${sw} - a recipe that omits a switch inherits a default"
     fi
 done
-
-# The bitness switch, under either spelling. TARGET_BITNESS is one variable
-# holding one fact; the TARGET_LIB*_VERSION pair is two booleans for the same
-# choice and can contradict itself.
-if grep -qF -- "-DTARGET_BITNESS=" "${RECIPE}"; then
-    pass "states -DTARGET_BITNESS= (one variable, one fact)"
-elif grep -qE -- "-DTARGET_LIB(32|64)_VERSION=" "${RECIPE}"; then
-    fail "states only the legacy -DTARGET_LIB*_VERSION=; the reference should show -DTARGET_BITNESS="
-else
-    fail "states no bitness switch"
-fi
 
 # The protocol switch, under either spelling. BINDER_PROTOCOL is the one to
 # write; BINDER_IPC_32BIT is the kernel's own name, still honoured, and reads
 # backwards - so the reference recipe should be showing the clearer one.
-if grep -qF -- "-DBINDER_PROTOCOL=" "${RECIPE}"; then
-    pass "states -DBINDER_PROTOCOL= (the switch that does not invert)"
-elif grep -qF -- "-DBINDER_IPC_32BIT=" "${RECIPE}"; then
-    fail "states only the legacy -DBINDER_IPC_32BIT=; the reference should show -DBINDER_PROTOCOL="
+if printf '%s\n' "${SWITCHES}" | grep -qF -- "-DBINDER_PROTOCOL="; then
+    pass "passes -DBINDER_PROTOCOL= (the switch that does not invert)"
+elif printf '%s\n' "${SWITCHES}" | grep -qF -- "-DBINDER_IPC_32BIT="; then
+    fail "passes only the deprecated -DBINDER_IPC_32BIT=; the reference should show -DBINDER_PROTOCOL="
 else
-    fail "states no protocol switch - a recipe that omits it inherits a default"
+    fail "passes no protocol switch - a recipe that omits it inherits a default"
+fi
+
+# The ELF class is NOT a switch, and the reference recipe must not pass one.
+# It comes from CC/CXX, so declaring it restates what the compiler already says
+# - and a reader copying a bitness line into a multilib recipe is how a lib32-
+# variant ends up asserting the base recipe's width. TARGET_BITNESS is shown in
+# the comments as an optional assertion; that is where it belongs.
+if printf '%s\n' "${SWITCHES}" | grep -qE -- "-D(TARGET_BITNESS|TARGET_LIB(32|64)_VERSION)="; then
+    fail "passes a bitness switch - the ELF class follows CC/CXX and the reference should not declare it"
+else
+    pass "passes no bitness switch (the ELF class follows CC/CXX)"
+fi
+
+# No deprecated spelling in the recipe a reader copies.
+if printf '%s\n' "${SWITCHES}" | grep -qE -- "-D(BINDER_IPC_32BIT|TARGET_LIB(32|64)_VERSION)="; then
+    fail "passes a deprecated switch spelling; the reference recipe is what integrators copy"
+else
+    pass "passes no deprecated switch spelling"
 fi
 
 # 2. The reference recipe states the protocol outright. Every supported platform
 #    is protocol 8, so the simple thing is the right thing to show.
-if grep -qE -- '-DBINDER_PROTOCOL=[78]' "${RECIPE}"; then
+if printf '%s\n' "${SWITCHES}" | grep -qE -- '-DBINDER_PROTOCOL=[78]'; then
     pass "states the protocol outright"
 else
     fail "reference recipe does not state a protocol - the simple case should be the example"

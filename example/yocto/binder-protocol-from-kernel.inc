@@ -45,9 +45,14 @@ def binder_protocol(d):
     """Return the wire protocol this build must speak: '7' or '8'."""
     import os
     want = d.getVar('BINDER_PROTOCOL') or ''
-    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
+    # Only form the path when the staging dir is actually set. os.path.join
+    # with '' yields the RELATIVE '.config', which would read whatever happens
+    # to sit in bitbake's working directory - defeating the no-kernel guard
+    # below and potentially selecting a protocol from an unrelated config.
+    kbuild = d.getVar('STAGING_KERNEL_BUILDDIR') or ''
+    cfg = os.path.join(kbuild, '.config') if kbuild else ''
     derived = ''
-    if os.path.exists(cfg):
+    if cfg and os.path.exists(cfg):
         # Read the RESOLVED .config, never the defconfig. A defconfig may
         # request a symbol the kernel's Kconfig no longer has, and the request
         # is dropped silently - so a defconfig can claim protocol 7 while the
@@ -76,8 +81,9 @@ def binder_protocol(d):
 def binder_protocol_source(d):
     """Where that answer came from, for the build log."""
     import os
-    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
-    return "kernel:%s" % cfg if os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
+    kbuild = d.getVar('STAGING_KERNEL_BUILDDIR') or ''
+    cfg = os.path.join(kbuild, '.config') if kbuild else ''
+    return "kernel:%s" % cfg if cfg and os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
 
 # Three switches, all stated rather than inherited.
 #
