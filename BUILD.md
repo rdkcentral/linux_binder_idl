@@ -235,10 +235,11 @@ def binder_protocol_source(d):
 # Three switches, all stated rather than inherited.
 #
 #   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
-#   TARGET_BITNESS    the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
-#                     is already 32 or 64 - it reports 32 for a lib32- multilib
-#                     variant and 64 for the base recipe - so it passes straight
-#                     through and both roles build from one line.
+# The ELF class is NOT passed. It follows CC/CXX, which the toolchain already
+# sets, and nothing in the build can change it - so declaring it would only
+# restate what the compiler already says. Add -DTARGET_BITNESS=${SITEINFO_BITS}
+# if you want the build to STOP when the toolchain is not the bitness this
+# recipe is being built for; it is an assertion, not a setting.
 #   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
 #                     Protocol 8 is the default; deriving it anyway turns a
 #                     platform drifting back to protocol 7 into a build failure
@@ -253,7 +254,6 @@ BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
     -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
-    -DTARGET_BITNESS=${SITEINFO_BITS} \
 "
 
 # State the decision once, in the task log, in a form a test can grep. CMake
@@ -496,7 +496,7 @@ convenience and are not used in a recipe.
 | Definition | Values | What it does |
 | ---------- | ------ | ------------ |
 | `-DBUILD_HOST_AIDL` | `ON` / `OFF` | Build the host AIDL compiler. `OFF` for anything that ships: the compiler runs on a build host to generate C++ offline, and no target image carries it. Leaving it `ON` also pulls in flex and bison. |
-| `-DTARGET_BITNESS` | `32` / `64` | **Declares** the ELF class of the library. It does **not** select it — nothing here adds `-m32`/`-m64`, the class comes from `CC`/`CXX`. The build stops if the declaration and the compiler disagree. Omit it and it follows the compiler. |
+| `-DTARGET_BITNESS` | `32` / `64` | **Optional, and most builds should omit it.** The ELF class comes from `CC`/`CXX` and nothing here can change it, so this only *asserts* what the compiler already is — the build stops if they disagree. Useful when you want a wrong toolchain to fail loudly rather than silently produce a host-native library. |
 | `-DBINDER_PROTOCOL` | `7` / `8` | The binder **wire protocol**, which is a property of the **kernel**, not of the build. `8` unless the target kernel is 32-bit at 4.17 or older with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`. Getting this wrong builds and links cleanly, then terminates every binder process at startup. |
 | `-DCMAKE_INSTALL_PREFIX` | path | Where `cmake --install` stages the result. |
 | `-DCMAKE_BUILD_TYPE` | `Release` / `Debug` | Standard CMake. |
@@ -507,8 +507,10 @@ Two of those are commonly confused, so stated plainly:
   perfectly well — protocol 8 needs 64-bit *fields*, not a 64-bit anything. So
   `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` is not a contradiction; it is the
   most common configuration there is.
-- **The protocol follows the kernel, the bitness follows the toolchain.**
-  Neither is a free choice, and neither can be derived from the other.
+- **The protocol follows the kernel; the bitness follows `CC`/`CXX`.** Only the
+  protocol is something you pass. Point the build at the right cross-compiler and
+  the ELF class takes care of itself — there is no switch that makes a 64-bit
+  toolchain emit 32-bit objects.
 
 The older spellings `-DTARGET_LIB32_VERSION=ON` / `-DTARGET_LIB64_VERSION=ON`
 and `-DBINDER_IPC_32BIT=ON|OFF` still work. `BINDER_IPC_32BIT` is the kernel's
@@ -523,7 +525,6 @@ cmake -S . -B build-target \
     -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
     -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_BITNESS=32 \
     -DBINDER_PROTOCOL=8 \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
@@ -532,7 +533,10 @@ cmake --install build-target
 ```
 
 Covers a 32-bit kernel from 4.18, a 32-bit kernel that has opted out of the
-legacy option, and 32-bit userspace on any 64-bit kernel.
+legacy option, and 32-bit userspace on any 64-bit kernel. The 32-bit ELF class
+comes from the `arm-linux-gnueabihf-*` compilers above and needs no switch; add
+`-DTARGET_BITNESS=32` only if you want the build to stop should those not be the
+compilers it actually gets.
 
 **64-bit ARM target (aarch64):**
 
@@ -542,7 +546,6 @@ cmake -S . -B build-target \
     -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
     -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_BITNESS=64 \
     -DBINDER_PROTOCOL=8 \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 
@@ -561,7 +564,6 @@ cmake -S . -B build-target \
     -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
     -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_BITNESS=32 \
     -DBINDER_PROTOCOL=7 \
     -DCMAKE_INSTALL_PREFIX=/usr/local
 ```
