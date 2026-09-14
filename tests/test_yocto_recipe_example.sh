@@ -39,6 +39,7 @@ set -uo pipefail
 HERE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT="$( cd "${HERE}/.." && pwd )"
 RECIPE="${ROOT}/example/yocto/linux-binder.bb"
+DERIVE_INC="${ROOT}/example/yocto/binder-protocol-from-kernel.inc"
 BUILD_MD="${ROOT}/BUILD.md"
 
 FAILED=0
@@ -81,31 +82,39 @@ else
     fail "states no protocol switch - a recipe that omits it inherits a default"
 fi
 
-# 2. The decision is reportable: a variable bitbake -e can read without running
-#    a task, and a line in the task log a matrix run can grep.
-for v in "BINDER_PROTOCOL_RESOLVED" "BINDER_PROTOCOL_SOURCE"; do
-    if grep -qF -- "${v}" "${RECIPE}"; then
-        pass "exposes ${v}"
-    else
-        fail "does not expose ${v} - the chosen protocol must be readable without a build"
-    fi
-done
-if grep -qF 'bbplain "binder: protocol=' "${RECIPE}"; then
-    pass "states the decision in the task log"
+# 2. The reference recipe states the protocol outright. Every supported platform
+#    is protocol 8, so the simple thing is the right thing to show.
+if grep -qE -- '-DBINDER_PROTOCOL=[78]' "${RECIPE}"; then
+    pass "states the protocol outright"
 else
-    fail "does not log the resolved protocol - a matrix run has nothing to grep"
+    fail "reference recipe does not state a protocol - the simple case should be the example"
 fi
 
-# 3. Derived from the resolved .config, and from the right variable.
-if grep -qF 'STAGING_KERNEL_BUILDDIR' "${RECIPE}" && grep -qF "'.config'" "${RECIPE}"; then
-    pass "derives the protocol from the kernel's resolved .config"
-else
-    fail "does not read STAGING_KERNEL_BUILDDIR/.config - the defconfig is not a substitute"
-fi
-if grep -qF 'virtual/kernel:do_shared_workdir' "${RECIPE}"; then
-    pass "depends on virtual/kernel:do_shared_workdir, so the .config is staged"
-else
-    fail "no do_configure[depends] on virtual/kernel:do_shared_workdir - the .config would not be there to read"
+# 3. The derivation is shipped separately, for a fleet that still needs it.
+[ -f "${DERIVE_INC}" ] || { fail "binder-protocol-from-kernel.inc is missing"; }
+if [ -f "${DERIVE_INC}" ]; then
+    pass "binder-protocol-from-kernel.inc exists for fleets that still need it"
+    if grep -qF 'STAGING_KERNEL_BUILDDIR' "${DERIVE_INC}" && grep -qF "'.config'" "${DERIVE_INC}"; then
+        pass "it derives from the kernel's resolved .config"
+    else
+        fail "it does not read STAGING_KERNEL_BUILDDIR/.config - the defconfig is not a substitute"
+    fi
+    if grep -qF 'virtual/kernel:do_shared_workdir' "${DERIVE_INC}"; then
+        pass "it depends on virtual/kernel:do_shared_workdir, so the .config is staged"
+    else
+        fail "no do_configure[depends] on virtual/kernel:do_shared_workdir"
+    fi
+    if grep -qF 'BINDER_PROTOCOL_RESOLVED' "${DERIVE_INC}"; then
+        pass "it exposes BINDER_PROTOCOL_RESOLVED"
+    else
+        fail "it does not expose BINDER_PROTOCOL_RESOLVED"
+    fi
+    # The recipe must point at it, or nobody discovers the option exists.
+    if grep -qF 'binder-protocol-from-kernel.inc' "${RECIPE}"; then
+        pass "the reference recipe points at it"
+    else
+        fail "the reference recipe never mentions the derivation option"
+    fi
 fi
 
 # 4. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
