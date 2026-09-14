@@ -17,8 +17,14 @@
 # * SPDX-License-Identifier: Apache-2.0
 # */
 #
-# Exercise the reference recipe's protocol derivation - the real function, read
-# out of example/yocto/linux-binder.bb, not a copy of it.
+# Exercise the optional protocol derivation - the real function, read out of
+# example/yocto/binder-protocol-from-kernel.inc, not a copy of it.
+#
+# The reference recipe states protocol 8 outright, because every supported
+# platform is protocol 8. This include is for a fleet that still has protocol-7
+# platforms, and for turning a kernel that drifts back to 7 into a build failure
+# rather than a device that will not boot. It is opt-in, so it is easy for it to
+# rot unnoticed - hence testing it directly.
 #
 # What this covers that the recipe lint cannot: the lint matches text, so it
 # proves a switch is mentioned and says nothing about what the recipe decides.
@@ -35,7 +41,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RECIPE = os.path.join(HERE, "..", "example", "yocto", "linux-binder.bb")
+RECIPE = os.path.join(HERE, "..", "example", "yocto", "binder-protocol-from-kernel.inc")
 
 PASS, FAIL = 0, 0
 

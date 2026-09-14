@@ -190,78 +190,27 @@ inherit cmake systemd siteinfo
 # kernel in scope to read it.
 do_configure[depends] += "virtual/kernel:do_shared_workdir"
 
-# Escape hatch for a build with no kernel in scope, an SDK for instance. Left
-# empty the protocol is derived, which is what a device build should do.
-BINDER_PROTOCOL ?= ""
-
-def binder_protocol(d):
-    """Return the wire protocol this build must speak: '7' or '8'."""
-    import os
-    want = d.getVar('BINDER_PROTOCOL') or ''
-    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
-    derived = ''
-    if os.path.exists(cfg):
-        # Read the RESOLVED .config, never the defconfig. A defconfig may
-        # request a symbol the kernel's Kconfig no longer has, and the request
-        # is dropped silently - so a defconfig can claim protocol 7 while the
-        # kernel it produced serves protocol 8.
-        derived = '8'
-        with open(cfg) as f:
-            for line in f:
-                if line.strip() == 'CONFIG_ANDROID_BINDER_IPC_32BIT=y':
-                    derived = '7'
-                    break
-    if derived and want and derived != want:
-        bb.fatal("binder: the kernel serves protocol %s but BINDER_PROTOCOL is "
-                 "%s. A mismatch terminates every binder process at startup."
-                 % (derived, want))
-    proto = derived or want
-    if not proto:
-        bb.fatal("binder: no kernel .config in scope and BINDER_PROTOCOL is "
-                 "unset, so the wire protocol cannot be determined.")
-    if proto not in ('7', '8'):
-        # Anything else is a typo. Mapping it to a protocol silently is how a
-        # configuration mistake becomes a device that will not boot.
-        bb.fatal("binder: BINDER_PROTOCOL is '%s'; the only wire protocols are "
-                 "7 and 8." % proto)
-    return proto
-
-def binder_protocol_source(d):
-    """Where that answer came from, for the build log."""
-    import os
-    cfg = os.path.join(d.getVar('STAGING_KERNEL_BUILDDIR') or '', '.config')
-    return "kernel:%s" % cfg if os.path.exists(cfg) else "declared:BINDER_PROTOCOL"
-
-# Three switches, all stated rather than inherited.
+# Protocol 8, on every platform. It is what every 64-bit kernel serves, what
+# every kernel from 4.18 serves, and what a 32-bit userspace runs perfectly well
+# - it needs 64-bit FIELDS, not a 64-bit anything. Protocol 7 is legacy
+# compatibility and is being retired.
 #
-#   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
 # The ELF class is NOT passed. It follows CC/CXX, which the toolchain already
 # sets, and nothing in the build can change it - so declaring it would only
 # restate what the compiler already says. Add -DTARGET_BITNESS=${SITEINFO_BITS}
 # if you want the build to STOP when the toolchain is not the bitness this
 # recipe is being built for; it is an assertion, not a setting.
-#   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
-#                     Protocol 8 is the default; deriving it anyway turns a
-#                     platform drifting back to protocol 7 into a build failure
-#                     rather than a boot failure. BINDER_IPC_32BIT is the old
-#                     spelling of the same switch and still works.
-# Resolved once, and readable without running a task:
-#     bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
-# The switch derives from it, so the decision has exactly one evaluation point.
-BINDER_PROTOCOL_RESOLVED ?= "${@binder_protocol(d)}"
-BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
-
+#
+# If your fleet still has protocol-7 platforms, or you want a kernel drifting
+# back to protocol 7 to fail the BUILD rather than the device, derive it instead:
+#
+#     require binder-protocol-from-kernel.inc
+#     EXTRA_OECMAKE += " -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED}"
+#
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
+    -DBINDER_PROTOCOL=8 \
 "
-
-# State the decision once, in the task log, in a form a test can grep. CMake
-# prints its own "binder wire protocol: N" line, so the two are independent
-# statements of the same fact and a disagreement is visible.
-do_configure:prepend() {
-    bbplain "binder: protocol=${BINDER_PROTOCOL_RESOLVED} bits=${SITEINFO_BITS} source=${BINDER_PROTOCOL_SOURCE}"
-}
 
 do_install:append() {
     install -d ${D}${systemd_unitdir}/system
@@ -331,11 +280,47 @@ A protocol mismatch is not caught at build time. It surfaces on the device, wher
 every binder process terminates at startup. [`PROTOCOL.md`](PROTOCOL.md) carries
 the full matrix, the kernel-version derivation and the verification steps.
 
+#### Deriving the protocol from the kernel
+
+The recipe above states protocol 8 because every supported platform serves it.
+Two situations want the protocol worked out from the kernel instead:
+
+- a fleet that still has protocol-7 platforms in it, where one recipe has to
+  serve both
+- wanting a kernel that **drifts back** to protocol 7 — someone re-adding the
+  Kconfig patch, say — to fail the **build** rather than produce a device on
+  which every binder process dies at startup
+
+`example/yocto/binder-protocol-from-kernel.inc` does that. Use it with:
+
+```bitbake
+require binder-protocol-from-kernel.inc
+EXTRA_OECMAKE += " -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED}"
+```
+
+It reads the kernel's **resolved** `.config` at
+`${STAGING_KERNEL_BUILDDIR}/.config`, pulling the configured kernel into scope
+with `do_configure[depends] += "virtual/kernel:do_shared_workdir"`. Never the
+defconfig: a defconfig can request a symbol the kernel's Kconfig no longer has,
+and the request is dropped in silence, so it can claim protocol 7 while the
+kernel it produced serves protocol 8.
+
+`BINDER_PROTOCOL` remains available for a build with no kernel in scope, an SDK
+for instance. Given both a kernel and a declared value, they must agree — a
+disagreement is fatal rather than one quietly winning.
+
+The resolved answer is readable without running a task:
+
+```sh
+bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
+```
+
 **Key Points:**
 
-- **The protocol is derived, not declared**: reading the kernel's resolved `.config` cannot drift from
-  the kernel the way a hand-maintained board flag can. `BINDER_PROTOCOL` exists for builds with no
-  kernel in scope, and the build fails if the two disagree
+- **The protocol is stated, because there is one**: every supported platform is
+  protocol 8, so the recipe says `-DBINDER_PROTOCOL=8` and there is nothing to
+  work out. See *Deriving the protocol from the kernel* below for the fleets
+  that still need the other thing
 - **`SITEINFO_BITS`, not `TUNE_FEATURES`**: it is the target's word size directly, so it covers every
   64-bit architecture rather than matching on one of them, and it is multilib-aware
 - **Production builds**: Only build target runtime libraries. `BUILD_HOST_AIDL` is `OFF` by default,
