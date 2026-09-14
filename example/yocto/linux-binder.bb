@@ -97,9 +97,10 @@ def binder_protocol_source(d):
 # Three switches, all stated rather than inherited.
 #
 #   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
-#   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
-#                     reports 32 for a lib32- multilib variant and 64 for the
-#                     base recipe, so both roles build from one expression.
+#   TARGET_BITNESS    the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
+#                     is already 32 or 64 - it reports 32 for a lib32- multilib
+#                     variant and 64 for the base recipe - so it passes straight
+#                     through and both roles build from one line.
 #   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
 #                     Protocol 8 is the default; deriving it anyway turns a
 #                     platform drifting back to protocol 7 into a build failure
@@ -114,7 +115,7 @@ BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
     -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
-    ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
+    -DTARGET_BITNESS=${SITEINFO_BITS} \
 "
 
 # State the decision once, in the task log, in a form a test can grep. CMake

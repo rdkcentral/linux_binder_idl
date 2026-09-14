@@ -121,7 +121,8 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `CXXFLAGS` | C++ compiler flags | None |
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
-| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain |
+| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
+| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | The old spellings. Still honoured | derived from `TARGET_BITNESS` |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
 | `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` |
 
@@ -234,9 +235,10 @@ def binder_protocol_source(d):
 # Three switches, all stated rather than inherited.
 #
 #   BUILD_HOST_AIDL   always OFF - the host AIDL tool is not part of an image.
-#   TARGET_LIB*       the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
-#                     reports 32 for a lib32- multilib variant and 64 for the
-#                     base recipe, so both roles build from one expression.
+#   TARGET_BITNESS    the ELF class, which follows the TOOLCHAIN. SITEINFO_BITS
+#                     is already 32 or 64 - it reports 32 for a lib32- multilib
+#                     variant and 64 for the base recipe - so it passes straight
+#                     through and both roles build from one line.
 #   BINDER_PROTOCOL   the wire protocol, 7 or 8, which follows the KERNEL.
 #                     Protocol 8 is the default; deriving it anyway turns a
 #                     platform drifting back to protocol 7 into a build failure
@@ -251,7 +253,7 @@ BINDER_PROTOCOL_SOURCE   ?= "${@binder_protocol_source(d)}"
 EXTRA_OECMAKE += " \
     -DBUILD_HOST_AIDL=OFF \
     -DBINDER_PROTOCOL=${BINDER_PROTOCOL_RESOLVED} \
-    ${@bb.utils.contains('SITEINFO_BITS', '32', '-DTARGET_LIB32_VERSION=ON', '-DTARGET_LIB64_VERSION=ON', d)} \
+    -DTARGET_BITNESS=${SITEINFO_BITS} \
 "
 
 # State the decision once, in the task log, in a form a test can grep. CMake
@@ -351,7 +353,8 @@ The following tables list CMake variables for **direct CMake invocation in produ
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
-| `TARGET_LIB32_VERSION` | Declare a 32-bit target | follows the toolchain | Use for armhf, i686 |
+| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
+| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | The old spellings. Still honoured | derived from `TARGET_BITNESS` | Use for armhf, i686 |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
 | `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` | Must match the target kernel |
 

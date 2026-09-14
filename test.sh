@@ -512,6 +512,23 @@ test_2_6() {
     else
         print_pass "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing is refused"
     fi
+    # TARGET_BITNESS and its two legacy spellings, pinned the same way.
+    if probe_switches "$d" -DTARGET_BITNESS=64 && configure_selected 64bit 8; then
+        print_pass "TARGET_BITNESS=64 declares a 64-bit target"
+    else
+        print_fail "TARGET_BITNESS=64 did not declare a 64-bit target"
+    fi
+    if probe_switches "$d" -DTARGET_BITNESS=32; then
+        print_fail "TARGET_BITNESS=32 accepted against a 64-bit toolchain"
+    else
+        print_pass "TARGET_BITNESS contradicting the toolchain is refused"
+    fi
+    if probe_switches "$d" -DTARGET_LIB32_VERSION=ON -DTARGET_LIB64_VERSION=ON; then
+        print_fail "both legacy bitness flags ON was accepted"
+    else
+        print_pass "both legacy bitness flags ON is refused"
+    fi
+
     if probe_switches "$d" -DBINDER_PROTOCOL=9; then
         print_fail "BINDER_PROTOCOL=9 was accepted; only 7 and 8 exist"
     else

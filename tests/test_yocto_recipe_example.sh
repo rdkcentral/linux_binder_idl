@@ -51,13 +51,24 @@ echo "Checking the reference recipe..."
 pass "example/yocto/linux-binder.bb exists"
 
 # 1. All three switches stated.
-for sw in "-DBUILD_HOST_AIDL=OFF" "TARGET_LIB32_VERSION=ON"; do
+for sw in "-DBUILD_HOST_AIDL=OFF"; do
     if grep -qF -- "${sw}" "${RECIPE}"; then
         pass "states ${sw}"
     else
         fail "does not state ${sw} - a recipe that omits a switch inherits a default"
     fi
 done
+
+# The bitness switch, under either spelling. TARGET_BITNESS is one variable
+# holding one fact; the TARGET_LIB*_VERSION pair is two booleans for the same
+# choice and can contradict itself.
+if grep -qF -- "-DTARGET_BITNESS=" "${RECIPE}"; then
+    pass "states -DTARGET_BITNESS= (one variable, one fact)"
+elif grep -qE -- "-DTARGET_LIB(32|64)_VERSION=" "${RECIPE}"; then
+    fail "states only the legacy -DTARGET_LIB*_VERSION=; the reference should show -DTARGET_BITNESS="
+else
+    fail "states no bitness switch"
+fi
 
 # The protocol switch, under either spelling. BINDER_PROTOCOL is the one to
 # write; BINDER_IPC_32BIT is the kernel's own name, still honoured, and reads
