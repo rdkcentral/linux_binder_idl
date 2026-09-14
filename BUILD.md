@@ -122,9 +122,9 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
-| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | The old spellings. Still honoured | derived from `TARGET_BITNESS` |
+| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | Accepted as aliases: `TARGET_LIB32_VERSION=ON` is `TARGET_BITNESS=32` | follows the toolchain |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
-| `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` |
+| `BINDER_IPC_32BIT` | Accepted as an alias: `ON` is protocol 7, `OFF` is protocol 8 | `OFF` |
 
 ### Examples
 
@@ -193,7 +193,8 @@ do_configure[depends] += "virtual/kernel:do_shared_workdir"
 # Protocol 8, on every platform. It is what every 64-bit kernel serves, what
 # every kernel from 4.18 serves, and what a 32-bit userspace runs perfectly well
 # - it needs 64-bit FIELDS, not a 64-bit anything. Protocol 7 is legacy
-# compatibility and is being retired.
+# compatibility, for a 32-bit kernel at 4.17 or older that still carries
+# CONFIG_ANDROID_BINDER_IPC_32BIT.
 #
 # The ELF class is NOT passed. It follows CC/CXX, which the toolchain already
 # sets, and nothing in the build can change it - so declaring it would only
@@ -351,9 +352,9 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-------|
 | `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
 | `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
-| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | The old spellings. Still honoured | derived from `TARGET_BITNESS` | Use for armhf, i686 |
+| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | Accepted as aliases: `TARGET_LIB32_VERSION=ON` is `TARGET_BITNESS=32` | follows the toolchain | Use for armhf, i686 |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
-| `BINDER_IPC_32BIT` | The old spelling: `ON` = protocol 7, `OFF` = 8. Still honoured | derived from `BINDER_PROTOCOL` | Must match the target kernel |
+| `BINDER_IPC_32BIT` | Accepted as an alias: `ON` is protocol 7, `OFF` is protocol 8 | `OFF` | Must match the target kernel |
 
 **Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
 
@@ -481,7 +482,7 @@ convenience and are not used in a recipe.
 | Definition | Values | What it does |
 | ---------- | ------ | ------------ |
 | `-DBUILD_HOST_AIDL` | `ON` / `OFF` | Build the host AIDL compiler. `OFF` for anything that ships: the compiler runs on a build host to generate C++ offline, and no target image carries it. Leaving it `ON` also pulls in flex and bison. |
-| `-DTARGET_BITNESS` | `32` / `64` | **Optional, and most builds should omit it.** The ELF class comes from `CC`/`CXX` and nothing here can change it, so this only *asserts* what the compiler already is — the build stops if they disagree. Useful when you want a wrong toolchain to fail loudly rather than silently produce a host-native library. |
+| `-DTARGET_BITNESS` | `32` / `64` | **Optional.** The ELF class comes from `CC`/`CXX`; this asserts what the compiler is, and the build stops if they disagree. Pass it when a wrong toolchain should fail loudly rather than produce a host-native library. |
 | `-DBINDER_PROTOCOL` | `7` / `8` | The binder **wire protocol**, which is a property of the **kernel**, not of the build. `8` unless the target kernel is 32-bit at 4.17 or older with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`. Getting this wrong builds and links cleanly, then terminates every binder process at startup. |
 | `-DCMAKE_INSTALL_PREFIX` | path | Where `cmake --install` stages the result. |
 | `-DCMAKE_BUILD_TYPE` | `Release` / `Debug` | Standard CMake. |
@@ -496,11 +497,6 @@ Two of those are commonly confused, so stated plainly:
   protocol is something you pass. Point the build at the right cross-compiler and
   the ELF class takes care of itself — there is no switch that makes a 64-bit
   toolchain emit 32-bit objects.
-
-The older spellings `-DTARGET_LIB32_VERSION=ON` / `-DTARGET_LIB64_VERSION=ON`
-and `-DBINDER_IPC_32BIT=ON|OFF` still work. `BINDER_IPC_32BIT` is the kernel's
-own symbol name, and `=OFF` means protocol 8 — it names the legacy mode rather
-than the protocol, which is why the clearer spellings above are preferred.
 
 **32-bit ARM target (armhf), protocol 8 — the common case:**
 
