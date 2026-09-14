@@ -287,7 +287,7 @@ compat path; a 32-bit kernel serves protocol 8 too, once the Kconfig option is o
 everywhere, and the two builds are the same build:
 
 ```text
--DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF
+-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8
 ```
 
 **The protocol is a property of the platform; the bitness is a property of the role.** There is one
@@ -323,11 +323,11 @@ only variable left is whether the kernel is old enough to still serve protocol 7
 
 | Platform | Kernel | MW | Vendor | Protocol | MW build | Vendor build |
 | --- | --- | --- | --- | --- | --- | --- |
-| Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `LIB32=ON` `IPC32=ON` | same as MW |
-| 32-bit kernel at protocol 8 | 32-bit, option unset or absent — every kernel ≥ 4.18, and any older one whose config clears it | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
-| **64-bit kernel — recommended** | 64-bit | 32-bit | 32-bit | **8** | `LIB32=ON` `IPC32=OFF` | same as MW |
-| 64-bit kernel, 64-bit vendor | 64-bit | 32-bit | 64-bit | **8** | `LIB32=ON` `IPC32=OFF` | `LIB64=ON` `IPC32=OFF` |
-| All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `LIB64=ON` `IPC32=OFF` | same as MW |
+| Legacy all-32-bit | 32-bit, ≤ 4.17, option `=y` | 32-bit | 32-bit | **7** | `BITNESS=32` `PROTOCOL=7` | same as MW |
+| 32-bit kernel at protocol 8 | 32-bit, option unset or absent — every kernel ≥ 4.18, and any older one whose config clears it | 32-bit | 32-bit | **8** | `BITNESS=32` `PROTOCOL=8` | same as MW |
+| **64-bit kernel — recommended** | 64-bit | 32-bit | 32-bit | **8** | `BITNESS=32` `PROTOCOL=8` | same as MW |
+| 64-bit kernel, 64-bit vendor | 64-bit | 32-bit | 64-bit | **8** | `BITNESS=32` `PROTOCOL=8` | `BITNESS=64` `PROTOCOL=8` |
+| All-64-bit | 64-bit | 64-bit | 64-bit | **8** | `BITNESS=64` `PROTOCOL=8` | same as MW |
 
 The middle three rows are the same userspace build. A 64-bit kernel changes nothing about it: the
 32-bit processes run over the kernel's compat path, which is a distinct path in the binder driver
@@ -375,9 +375,9 @@ speaks to the driver.
 
 | Configuration | Target | Toolchain | Protocol | Switches |
 | --- | --- | --- | --- | --- |
-| **A** — Legacy all-32-bit | 32-bit kernel ≤ 4.17 with the option set | 32-bit | 7 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON` |
-| **B** — Mixed, 32-bit MW | 32-bit userspace on a protocol-8 kernel | 32-bit | 8 | `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
-| **C** — All-64-bit | any protocol-8 kernel | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF` |
+| **A** — Legacy all-32-bit | 32-bit kernel ≤ 4.17 with the option set | 32-bit | 7 | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=7` |
+| **B** — Mixed, 32-bit MW | 32-bit userspace on a protocol-8 kernel | 32-bit | 8 | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` |
+| **C** — All-64-bit | any protocol-8 kernel | 64-bit | 8 | `-DTARGET_BITNESS=64 -DBINDER_PROTOCOL=8` |
 
 Row **A** is the one that must state its switch. Protocol 8 is the default on every toolchain, so
 rows B and C are what a build inherits without asking, and only the legacy platform overrides it.

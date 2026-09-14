@@ -38,10 +38,15 @@ set -euo pipefail
 #   CXXFLAGS       - C++ compiler flags
 #   LDFLAGS        - Linker flags
 #   BUILD_TYPE     - Debug or Release (default: Release)
-#   TARGET_LIB32_VERSION - Declare a 32-bit target (default: follows the toolchain)
+#   TARGET_BITNESS       - Declare the target ELF class: 32 or 64
+#                          (default: follows the toolchain)
+#   TARGET_LIB32_VERSION - The old spelling of the same thing. Still honoured.
 #   BINDER_IPC_32BIT - Binder wire protocol: ON = 7, OFF = 8. Must match the
 #                    target kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
 #                    (default: OFF - protocol 8, on every toolchain)
+#   BINDER_PROTOCOL      - The wire protocol, 7 or 8. Preferred over
+#                          BINDER_IPC_32BIT, which names the legacy mode and so
+#                          reads backwards (=OFF is protocol 8).
 #   BUILD_DIR      - CMake build tree (default: build-target)
 #   OUT_DIR        - Staging tree for libs/bin/include (default: out/target)
 #
@@ -77,6 +82,27 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out/target}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 # Left empty when the caller did not state one; resolved from the toolchain
 # below, once CC/CFLAGS have been worked out.
+# TARGET_BITNESS is the switch; TARGET_LIB32_VERSION is the old spelling and
+# still works, so recipes already using it keep building. Both map to the same
+# thing before anything else reads it.
+if [ -n "${TARGET_BITNESS:-}" ]; then
+  case "${TARGET_BITNESS}" in
+    32) TARGET_LIB32_VERSION=ON ;;
+    64) TARGET_LIB32_VERSION=OFF ;;
+    *)  echo "ERROR: TARGET_BITNESS is '${TARGET_BITNESS}'; it must be 32 or 64." >&2
+        exit 1 ;;
+  esac
+fi
+# Likewise BINDER_PROTOCOL over BINDER_IPC_32BIT, which reads backwards.
+if [ -n "${BINDER_PROTOCOL:-}" ]; then
+  case "${BINDER_PROTOCOL}" in
+    7) BINDER_IPC_32BIT=ON ;;
+    8) BINDER_IPC_32BIT=OFF ;;
+    *) echo "ERROR: BINDER_PROTOCOL is '${BINDER_PROTOCOL}'; the only wire protocols are 7 and 8." >&2
+       exit 1 ;;
+  esac
+fi
+
 TARGET_LIB32="${TARGET_LIB32_VERSION:-}"
 CLEAN_BUILD=false
 FORCE_BUILD=false
