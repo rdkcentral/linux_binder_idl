@@ -97,12 +97,14 @@ else
     pass "passes no deprecated switch spelling"
 fi
 
-# 2. The reference recipe states the protocol outright. Every supported platform
-#    is protocol 8, so the simple thing is the right thing to show.
-if printf '%s\n' "${SWITCHES}" | grep -qE -- '-DBINDER_PROTOCOL=[78]'; then
-    pass "states the protocol outright"
+# 2. The reference recipe states the protocol outright, and it is pinned to 8
+#    exactly rather than "7 or 8": every supported platform serves protocol 8,
+#    so that is what the copied example must show. Accepting either would let
+#    the reference recipe drift to the legacy value and still pass.
+if printf '%s\n' "${SWITCHES}" | grep -qF -- '-DBINDER_PROTOCOL=8'; then
+    pass "states protocol 8 outright"
 else
-    fail "reference recipe does not state a protocol - the simple case should be the example"
+    fail "reference recipe does not state -DBINDER_PROTOCOL=8 - every supported platform serves 8"
 fi
 
 # 3. The derivation is shipped separately, for a fleet that still needs it.
@@ -142,14 +144,27 @@ fi
 #    supposed to contain. It passed anyway, because the recipe carries that
 #    snippet as a COMMENT and grep -F matches inside it: a green result standing
 #    on commented-out text rather than on the recipe.
+RECIPE_ALL="$(cat "${RECIPE}")"
 BLOCK="$(awk '/^```bitbake$/{if(!seen){seen=1;f=1;next}} /^```$/{if(f)exit} f' "${BUILD_MD}")"
 if [ -z "${BLOCK}" ]; then
     fail "no bitbake block found in BUILD.md"
 else
+    # An ACTIVE line in the doc must match an ACTIVE line in the recipe. Matching
+    # the whole file would let a commented-out copy satisfy the check, so
+    # commenting out EXTRA_OECMAKE while leaving the explanation above it would
+    # stay green - the same false-green the extraction above already had to fix.
+    # Comment lines in the doc block are matched against the whole recipe,
+    # because that is what they are there.
+    ACTIVE="$(grep -v '^[[:space:]]*#' "${RECIPE}")"
     missing=0
     while IFS= read -r line; do
         [ -z "${line//[[:space:]]/}" ] && continue
-        grep -qF -- "${line}" "${RECIPE}" || { echo "         drifted: ${line}"; missing=$((missing + 1)); }
+        case "${line}" in
+            \#*) printf '%s\n' "${RECIPE_ALL}" | grep -qF -- "${line}" \
+                    || { echo "         drifted (comment): ${line}"; missing=$((missing + 1)); } ;;
+            *)  printf '%s\n' "${ACTIVE}" | grep -qF -- "${line}" \
+                    || { echo "         drifted: ${line}"; missing=$((missing + 1)); } ;;
+        esac
     done <<< "${BLOCK}"
     if [ "${missing}" -eq 0 ]; then
         pass "BUILD.md's recipe block matches example/yocto/linux-binder.bb"

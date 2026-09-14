@@ -152,9 +152,11 @@ copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
 # With <derive> non-empty the build is invoked WITHOUT TARGET_BITNESS or
 # BINDER_PROTOCOL, so it has to work both out from the toolchain — the path a
 # plain `./build-linux-binder-aidl.sh` takes. That derivation is what selects
-# the protocol for every integrator who does not pass the flags, so it is what
-# shipped the protocol-7-on-64-bit default (#54); the explicit variants below
-# supply both values and therefore cannot exercise it.
+# the protocol for every integrator who does not pass the flags, so these rows
+# are the ones that prove the protocol-8 default (#72) reaches a real build -
+# and, on the legacy kernel, that it is deliberately wrong there and fails the
+# boot rather than shipping. The explicit variants below supply both values and
+# therefore cannot exercise any of it.
 prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     local arch="$1" proto="$2" bb="$3" derive="${4:-}"
     local key="$1-p$2${derive:+-derived}"
