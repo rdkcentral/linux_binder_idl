@@ -202,21 +202,70 @@ if (BUILD_WITHOUT_LIBLOG)
     set(BUILD_WITH_LIBLOG OFF)
 endif ()
 
-# Declared target bitness. Neither this nor TARGET_LIB64_VERSION adds -m32/-m64:
-# the ELF class comes from CC/CXX. What the declaration does decide is the
-# default wire protocol below, so it has to agree with the toolchain or the
-# guard further down rejects the build. Follow CMAKE_SIZEOF_VOID_P rather than
-# assuming 32-bit — an explicit -DTARGET_LIB32_VERSION still wins.
-if (NOT DEFINED TARGET_LIB32_VERSION)
-    if (CMAKE_SIZEOF_VOID_P EQUAL 4)
-        set(TARGET_LIB32_VERSION ON)
+# Declared target bitness (#75).
+#
+# TARGET_BITNESS is the switch: 32 or 64. One variable holding one fact, so it
+# cannot contradict itself.
+#
+# It DECLARES, it does not build. Nothing here adds -m32 or -m64 - the ELF class
+# comes from CC/CXX alone, and CMAKE_SIZEOF_VOID_P is what the compiler actually
+# is. The declaration exists only to catch a caller who believes they are
+# cross-compiling and are not: if the two disagree the build stops rather than
+# producing a library of the bitness nobody asked for. Left unset it simply
+# follows the compiler, which is the right answer for almost every build.
+#
+# TARGET_LIB32_VERSION / TARGET_LIB64_VERSION are the old spellings and still
+# work. They are poor names - "VERSION" suggests a version number, they read as
+# enabling something rather than declaring it, and being two booleans for one
+# binary fact they can disagree with each other. They are kept because existing
+# recipes pass them.
+if (DEFINED TARGET_LIB32_VERSION AND DEFINED TARGET_LIB64_VERSION
+    AND TARGET_LIB32_VERSION AND TARGET_LIB64_VERSION)
+    message(FATAL_ERROR
+        "TARGET_LIB32_VERSION and TARGET_LIB64_VERSION are both ON. They are two "
+        "spellings of one choice; set -DTARGET_BITNESS=32 or -DTARGET_BITNESS=64.")
+endif ()
+
+# Fold the old spellings into the new one, then forget them.
+if (NOT DEFINED TARGET_BITNESS)
+    if (DEFINED TARGET_LIB64_VERSION AND TARGET_LIB64_VERSION)
+        set(TARGET_BITNESS 64)
+    elseif (DEFINED TARGET_LIB32_VERSION)
+        if (TARGET_LIB32_VERSION)
+            set(TARGET_BITNESS 32)
+        else ()
+            set(TARGET_BITNESS 64)
+        endif ()
     else ()
-        set(TARGET_LIB32_VERSION OFF)
+        # Nothing declared: follow the compiler.
+        math(EXPR TARGET_BITNESS "${CMAKE_SIZEOF_VOID_P} * 8")
     endif ()
-endif()
-if (TARGET_LIB64_VERSION)
-    message("Building 64bit binder library")
+endif ()
+
+if (NOT "${TARGET_BITNESS}" STREQUAL "32" AND NOT "${TARGET_BITNESS}" STREQUAL "64")
+    message(FATAL_ERROR
+        "TARGET_BITNESS is '${TARGET_BITNESS}'; it must be 32 or 64.")
+endif ()
+
+# A declaration that contradicts the compiler is a mistake, not an instruction -
+# nothing here can make a 64-bit toolchain emit a 32-bit object.
+math(EXPR _toolchain_bits "${CMAKE_SIZEOF_VOID_P} * 8")
+if (NOT "${TARGET_BITNESS}" STREQUAL "${_toolchain_bits}")
+    message(FATAL_ERROR
+        "TARGET_BITNESS=${TARGET_BITNESS} but the toolchain is ${_toolchain_bits}-bit "
+        "(CMAKE_SIZEOF_VOID_P=${CMAKE_SIZEOF_VOID_P}). This switch declares the "
+        "bitness, it does not select it: pass a ${TARGET_BITNESS}-bit CC/CXX, or "
+        "drop the declaration and let it follow the compiler.")
+endif ()
+
+# The rest of the file still reads TARGET_LIB32_VERSION, so derive it back.
+if ("${TARGET_BITNESS}" STREQUAL "32")
+    set(TARGET_LIB32_VERSION ON)
+    set(TARGET_LIB64_VERSION OFF)
+else ()
     set(TARGET_LIB32_VERSION OFF)
+    set(TARGET_LIB64_VERSION ON)
+    message("Building 64bit binder library")
 endif ()
 
 # Binder wire protocol vs compile bitness (linux_binder_idl#42, #72, #75).
