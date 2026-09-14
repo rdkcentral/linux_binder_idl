@@ -207,12 +207,16 @@ endif ()
 # TARGET_BITNESS is the switch: 32 or 64. One variable holding one fact, so it
 # cannot contradict itself.
 #
-# It DECLARES, it does not build. Nothing here adds -m32 or -m64 - the ELF class
-# comes from CC/CXX alone, and CMAKE_SIZEOF_VOID_P is what the compiler actually
-# is. The declaration exists only to catch a caller who believes they are
-# cross-compiling and are not: if the two disagree the build stops rather than
-# producing a library of the bitness nobody asked for. Left unset it simply
-# follows the compiler, which is the right answer for almost every build.
+# MOST BUILDS SHOULD NOT SET IT. It declares, it does not build: nothing here
+# adds -m32 or -m64, the ELF class comes from CC/CXX alone, and
+# CMAKE_SIZEOF_VOID_P already tells CMake what the compiler is. Unset, it simply
+# follows the compiler, which is right every time.
+#
+# It exists only as an optional ASSERTION, for a caller who wants the build to
+# stop if the toolchain is not what they expect - someone who meant to
+# cross-compile and finds CC unset would otherwise get a host-native library
+# that looks fine until it reaches the device. Pass it when you want that check;
+# leave it out otherwise.
 #
 # TARGET_LIB32_VERSION / TARGET_LIB64_VERSION are the old spellings and still
 # work. They are poor names - "VERSION" suggests a version number, they read as
@@ -349,16 +353,11 @@ if (BINDER_IPC_32BIT AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         "serves it. Either cross-compile with a 32-bit toolchain, or select "
         "protocol 8 with -DBINDER_PROTOCOL=8.")
 endif ()
-# Declared-flag consistency. Reachable only on a 32-bit toolchain (the guard
-# above has already rejected 64-bit), so this catches a caller who asked for
-# protocol 7 while declaring a 64-bit target.
-if (BINDER_IPC_32BIT AND NOT TARGET_LIB32_VERSION)
-    message(FATAL_ERROR
-        "BINDER_PROTOCOL=7 requires a 32-bit target, but "
-        "TARGET_LIB32_VERSION is OFF. Declare the bitness the toolchain actually "
-        "has (-DTARGET_LIB32_VERSION=ON), or select protocol 8 with "
-        "-DBINDER_PROTOCOL=8.")
-endif ()
+# There is deliberately no third guard pairing the protocol with the DECLARED
+# bitness. It would be unreachable: protocol 7 already requires a 32-bit
+# toolchain, and the declaration already has to match the toolchain, so the two
+# cannot disagree by the time we get here. A check that can never fire is worse
+# than none - it reads as protection that is not there.
 
 ###########################################################
 # Set all the path variables
