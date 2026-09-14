@@ -5,8 +5,9 @@ The Android 13 AOSP source code is cloned from `Google's` repositories. The Andr
  is __*android-13.0.0_r74*__, and the code has been modified to make it compatible with Linux.
 The project is primarily designed to build the binder runtime libraries for embedded devices.
 It also provides the `aidl` compiler for the architecture team to generate interface code offline.
-The declared target bitness and the binder wire protocol both follow the toolchain by default, and
-either can be overridden using CMake variables.
+The target ELF class follows the toolchain in `CC`/`CXX`, which is the only thing that decides it.
+The binder wire protocol does not follow the toolchain: it defaults to **8**, which every supported
+platform serves, and only a legacy platform states otherwise.
 
 **For comprehensive build documentation, see [BUILD.md](BUILD.md).**
 

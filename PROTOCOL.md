@@ -173,7 +173,7 @@ without the kernel change, which is the half-migration that produces the boot fa
 
 | Who | What they are told | What they set |
 | --- | --- | --- |
-| Kernel / BSP owner | the protocol this platform serves | `CONFIG_ANDROID_BINDER_IPC_32BIT`, explicitly, in every 32-bit defconfig |
+| Kernel / BSP owner | the protocol this platform serves | the resolved state of `CONFIG_ANDROID_BINDER_IPC_32BIT` — which on a stock 32-bit kernel at 4.17 or older means a **Kconfig change first**, because the symbol is prompt-less and a defconfig line alone does nothing |
 | Anyone building against libbinder | derive from that kernel | nothing by hand — the build reads the kernel |
 
 A rebuild is obliged for everything on a platform that links libbinder if and only if that
