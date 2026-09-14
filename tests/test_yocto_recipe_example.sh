@@ -24,8 +24,9 @@
 # a mistake in it is invisible until it reaches someone else's image. These
 # checks are what we can assert without a layer and a poky checkout:
 #
-#   1. It states all three switches. Omitting BINDER_IPC_32BIT is the failure
-#      that took an integrator to a protocol-7 library on a protocol-8 kernel.
+#   1. It states its switches under the current names. Omitting the protocol is
+#      the failure that took an integrator to a protocol-7 library on a
+#      protocol-8 kernel.
 #   2. It derives the protocol from the kernel's RESOLVED .config, not from a
 #      defconfig, which can request a symbol the kernel no longer has and have
 #      that request dropped in silence.

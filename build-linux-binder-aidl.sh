@@ -38,15 +38,18 @@ set -euo pipefail
 #   CXXFLAGS       - C++ compiler flags
 #   LDFLAGS        - Linker flags
 #   BUILD_TYPE     - Debug or Release (default: Release)
-#   TARGET_BITNESS       - Declare the target ELF class: 32 or 64
+#   BINDER_PROTOCOL      - Binder wire protocol: 7 or 8. Must match the target
+#                          kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
+#                          (default: 8, on every toolchain)
+#   TARGET_BITNESS       - Declare the target ELF class: 32 or 64. An assertion,
+#                          not a selection - the ELF class comes from CC/CXX
 #                          (default: follows the toolchain)
-#   TARGET_LIB32_VERSION - The old spelling of the same thing. Still honoured.
-#   BINDER_IPC_32BIT - Binder wire protocol: ON = 7, OFF = 8. Must match the
-#                    target kernel's CONFIG_ANDROID_BINDER_IPC_32BIT
-#                    (default: OFF - protocol 8, on every toolchain)
-#   BINDER_PROTOCOL      - The wire protocol, 7 or 8. Preferred over
-#                          BINDER_IPC_32BIT, which names the legacy mode and so
-#                          reads backwards (=OFF is protocol 8).
+#
+#   Deprecated spellings, still honoured so existing recipes keep working:
+#     BINDER_IPC_32BIT=ON|OFF          -> BINDER_PROTOCOL=7|8
+#     TARGET_LIB32_VERSION=ON          -> TARGET_BITNESS=32
+#     TARGET_LIB64_VERSION=ON          -> TARGET_BITNESS=64
+#
 #   BUILD_DIR      - CMake build tree (default: build-target)
 #   OUT_DIR        - Staging tree for libs/bin/include (default: out/target)
 #
@@ -63,7 +66,7 @@ set -euo pipefail
 #   export CFLAGS="--sysroot=/path/to/sysroot -march=armv7-a"
 #   export CXXFLAGS="--sysroot=/path/to/sysroot -march=armv7-a"
 #   export LDFLAGS="--sysroot=/path/to/sysroot"
-#   export TARGET_LIB32_VERSION=ON
+#   export BINDER_PROTOCOL=8
 #   ./build-linux-binder-aidl.sh
 #
 # Note: This builds for the TARGET architecture.
@@ -82,28 +85,44 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/out/target}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 # Left empty when the caller did not state one; resolved from the toolchain
 # below, once CC/CFLAGS have been worked out.
-# TARGET_BITNESS is the switch; TARGET_LIB32_VERSION is the old spelling and
-# still works, so recipes already using it keep building. Both map to the same
-# thing before anything else reads it.
+# TARGET_BITNESS and BINDER_PROTOCOL are the switches. TARGET_LIB32_VERSION /
+# TARGET_LIB64_VERSION and BINDER_IPC_32BIT are the deprecated spellings, still
+# honoured so recipes already using them keep building. Fold the old names into
+# the new ones here, before anything else reads them, and use only the new ones
+# from this point on.
+if [ -z "${TARGET_BITNESS:-}" ]; then
+  if [ "${TARGET_LIB64_VERSION:-}" = "ON" ]; then
+    TARGET_BITNESS=64
+  elif [ -n "${TARGET_LIB32_VERSION:-}" ]; then
+    case "${TARGET_LIB32_VERSION}" in
+      ON)  TARGET_BITNESS=32 ;;
+      OFF) TARGET_BITNESS=64 ;;
+    esac
+  fi
+fi
 if [ -n "${TARGET_BITNESS:-}" ]; then
   case "${TARGET_BITNESS}" in
-    32) TARGET_LIB32_VERSION=ON ;;
-    64) TARGET_LIB32_VERSION=OFF ;;
-    *)  echo "ERROR: TARGET_BITNESS is '${TARGET_BITNESS}'; it must be 32 or 64." >&2
-        exit 1 ;;
+    32|64) ;;
+    *) echo "ERROR: TARGET_BITNESS is '${TARGET_BITNESS}'; it must be 32 or 64." >&2
+       exit 1 ;;
   esac
 fi
-# Likewise BINDER_PROTOCOL over BINDER_IPC_32BIT, which reads backwards.
+
+if [ -z "${BINDER_PROTOCOL:-}" ] && [ -n "${BINDER_IPC_32BIT:-}" ]; then
+  case "${BINDER_IPC_32BIT}" in
+    ON)  BINDER_PROTOCOL=7 ;;
+    OFF) BINDER_PROTOCOL=8 ;;
+  esac
+fi
 if [ -n "${BINDER_PROTOCOL:-}" ]; then
   case "${BINDER_PROTOCOL}" in
-    7) BINDER_IPC_32BIT=ON ;;
-    8) BINDER_IPC_32BIT=OFF ;;
+    7|8) ;;
     *) echo "ERROR: BINDER_PROTOCOL is '${BINDER_PROTOCOL}'; the only wire protocols are 7 and 8." >&2
        exit 1 ;;
   esac
 fi
 
-TARGET_LIB32="${TARGET_LIB32_VERSION:-}"
+TARGET_BITS="${TARGET_BITNESS:-}"
 CLEAN_BUILD=false
 FORCE_BUILD=false
 BUILD_HOST_AIDL_TOOL=true
@@ -171,28 +190,28 @@ if [ -z "${TARGET_PTR_SIZE}" ]; then
   PTR_SIZE_KNOWN=0
   echo "WARNING: could not probe the pointer size of '${TARGET_CC:-cc}'."
   echo "         Leaving target bitness and wire protocol to CMake's own"
-  echo "         toolchain detection. Set TARGET_LIB32_VERSION / BINDER_IPC_32BIT"
+  echo "         toolchain detection. Set TARGET_BITNESS / BINDER_PROTOCOL"
   echo "         explicitly to override."
 fi
 
 # Declared target bitness, when the caller did not state one and the probe
 # worked. With no probe the -D is omitted entirely so CMake's default applies.
-if [ -z "${TARGET_LIB32}" ] && [ "${PTR_SIZE_KNOWN}" = "1" ]; then
+if [ -z "${TARGET_BITS}" ] && [ "${PTR_SIZE_KNOWN}" = "1" ]; then
   case "${TARGET_PTR_SIZE}" in
-    8) TARGET_LIB32=OFF ;;
-    *) TARGET_LIB32=ON  ;;
+    8) TARGET_BITS=64 ;;
+    *) TARGET_BITS=32 ;;
   esac
 fi
 
 # A caller-declared bitness that the toolchain contradicts is unbuildable, and
 # the failure otherwise surfaces as a confusing protocol guard further down.
-if [ "${PTR_SIZE_KNOWN}" = "1" ] && [ "${TARGET_LIB32}" = "OFF" ] \
-   && [ "${TARGET_PTR_SIZE}" = "4" ] && [ -z "${BINDER_IPC_32BIT:-}" ]; then
-  echo "ERROR: TARGET_LIB32_VERSION=OFF declares a 64-bit target, but '${TARGET_CC:-cc}'" >&2
+if [ "${PTR_SIZE_KNOWN}" = "1" ] && [ "${TARGET_BITS}" = "64" ] \
+   && [ "${TARGET_PTR_SIZE}" = "4" ] && [ -z "${BINDER_PROTOCOL:-}" ]; then
+  echo "ERROR: TARGET_BITNESS=64 declares a 64-bit target, but '${TARGET_CC:-cc}'" >&2
   echo "       is a 32-bit toolchain. For a 32-bit protocol-8 library (the mixed" >&2
   echo "       32-bit-MW configuration) declare the bitness the compiler actually" >&2
   echo "       has and select the protocol directly:" >&2
-  echo "           TARGET_LIB32_VERSION=ON BINDER_IPC_32BIT=OFF $0" >&2
+  echo "           TARGET_BITNESS=32 BINDER_PROTOCOL=8 $0" >&2
   exit 1
 fi
 
@@ -231,7 +250,7 @@ echo "Root dir:        ${ROOT_DIR}"
 echo "Build dir:       ${BUILD_DIR}"
 echo "Output dir:      ${OUT_DIR}"
 echo "Build type:      ${BUILD_TYPE}"
-echo "Target 32-bit:   ${TARGET_LIB32}"
+echo "Target bitness:  ${TARGET_BITS:-from the toolchain}"
 echo "Target CC:       ${TARGET_CC:-system default}"
 echo "Target CXX:      ${TARGET_CXX:-system default}"
 echo "Target CFLAGS:   ${TARGET_CFLAGS:-none}"
@@ -290,29 +309,36 @@ CMAKE_ARGS=(
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
   -DBUILD_HOST_AIDL=OFF
 )
-if [ -n "${TARGET_LIB32}" ]; then
-  CMAKE_ARGS+=(-DTARGET_LIB32_VERSION="${TARGET_LIB32}")
+# Clear the deprecated spellings from the cache first, and always. The build dir
+# is reused, so an earlier run that passed one of them leaves it behind — and
+# CMakeLists.txt treats a cached BINDER_IPC_32BIT that disagrees with the
+# BINDER_PROTOCOL below as a caller believing two things, and aborts. These are
+# listed before the -D values because CMake applies -D and -U in command-line
+# order.
+CMAKE_ARGS+=(-UTARGET_LIB32_VERSION -UTARGET_LIB64_VERSION -UBINDER_IPC_32BIT)
+
+if [ -n "${TARGET_BITS}" ]; then
+  CMAKE_ARGS+=(-DTARGET_BITNESS="${TARGET_BITS}")
 else
   # No probe and no caller value: drop any cached entry so CMake's own
   # toolchain-derived default applies instead of a stale one.
-  CMAKE_ARGS+=(-UTARGET_LIB32_VERSION)
+  CMAKE_ARGS+=(-UTARGET_BITNESS)
 fi
 
-# Binder wire protocol, decoupled from compile bitness (#42, #72). Pass an
-# explicit BOOL when the caller states one, so a value cached from an earlier
-# run in the reused build-target dir cannot silently stick (a prior
-# BINDER_IPC_32BIT=ON run leaving the cache at protocol 7). Otherwise clear the
-# cache entry and let CMakeLists.txt apply the default, which is protocol 8 on
-# every toolchain.
+# Binder wire protocol, decoupled from compile bitness (#42, #72). Pass it
+# explicitly when the caller states one, so a value cached from an earlier run
+# in the reused build-target dir cannot silently stick (a prior protocol-7 run
+# leaving the cache at 7). Otherwise clear the cache entry and let
+# CMakeLists.txt apply the default, which is protocol 8 on every toolchain.
 #
 # This deliberately does NOT derive. It used to mirror CMake's toolchain-derived
 # default here, and one rule written in two places is how the two drift apart:
-# when the default moved to protocol 8, this copy went on passing ON for a
-# 32-bit toolchain and quietly overrode it.
-if [ -n "${BINDER_IPC_32BIT:-}" ]; then
-  CMAKE_ARGS+=(-DBINDER_IPC_32BIT:BOOL="${BINDER_IPC_32BIT}")
+# when the default moved to protocol 8, this copy went on selecting protocol 7
+# for a 32-bit toolchain and quietly overrode it.
+if [ -n "${BINDER_PROTOCOL:-}" ]; then
+  CMAKE_ARGS+=(-DBINDER_PROTOCOL="${BINDER_PROTOCOL}")
 else
-  CMAKE_ARGS+=(-UBINDER_IPC_32BIT)
+  CMAKE_ARGS+=(-UBINDER_PROTOCOL)
 fi
 
 # When OE SDK cmake is used, the OEToolchainConfig.cmake handles compiler,

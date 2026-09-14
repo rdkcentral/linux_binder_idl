@@ -474,45 +474,29 @@ test_2_6() {
     local d=./build-switch-matrix
 
     # Row C - 64-bit userspace, protocol 8. The native toolchain here is 64-bit.
-    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DBINDER_PROTOCOL=8 \
         && configure_selected 64bit 8; then
-        print_pass "Row C (LIB64 + IPC32=OFF) configures at protocol 8"
+        print_pass "Row C (BITNESS=64 + PROTOCOL=8) configures at protocol 8"
     else
-        print_fail "Row C (LIB64 + IPC32=OFF) did not configure"
+        print_fail "Row C (BITNESS=64 + PROTOCOL=8) did not configure"
         tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
     fi
 
     # Protocol 7 carries 32-bit wire fields, which cannot hold a 64-bit pointer.
     # The kernel option is `depends on !64BIT` for the same reason, so a 64-bit
     # toolchain at protocol 7 is refused rather than left to fail on the device.
-    if probe_switches "$d" -DBINDER_IPC_32BIT=ON; then
-        print_fail "IPC32=ON with a 64-bit toolchain configured, and must not"
+    if probe_switches "$d" -DBINDER_PROTOCOL=7; then
+        print_fail "PROTOCOL=7 with a 64-bit toolchain configured, and must not"
     else
-        print_pass "IPC32=ON with a 64-bit toolchain is refused at configure time"
+        print_pass "PROTOCOL=7 with a 64-bit toolchain is refused at configure time"
     fi
 
-    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON -DBINDER_IPC_32BIT=ON; then
-        print_fail "LIB64 + IPC32=ON configured, and must not"
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DBINDER_PROTOCOL=7; then
+        print_fail "BITNESS=64 + PROTOCOL=7 configured, and must not"
     else
-        print_pass "LIB64 + IPC32=ON is refused at configure time"
+        print_pass "BITNESS=64 + PROTOCOL=7 is refused at configure time"
     fi
 
-    # BINDER_PROTOCOL is the switch; BINDER_IPC_32BIT is the old spelling and
-    # must keep working, because integrator recipes already use it. Both are
-    # pinned here so neither can drift: an alias that stops aliasing changes
-    # the protocol of every build that still uses the old name.
-    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DTARGET_LIB64_VERSION=ON \
-        && configure_selected 64bit 8; then
-        print_pass "BINDER_PROTOCOL=8 selects protocol 8"
-    else
-        print_fail "BINDER_PROTOCOL=8 did not select protocol 8"
-    fi
-    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DBINDER_IPC_32BIT=ON; then
-        print_fail "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing was accepted"
-    else
-        print_pass "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing is refused"
-    fi
-    # TARGET_BITNESS and its two legacy spellings, pinned the same way.
     if probe_switches "$d" -DTARGET_BITNESS=64 && configure_selected 64bit 8; then
         print_pass "TARGET_BITNESS=64 declares a 64-bit target"
     else
@@ -523,10 +507,36 @@ test_2_6() {
     else
         print_pass "TARGET_BITNESS contradicting the toolchain is refused"
     fi
-    if probe_switches "$d" -DTARGET_LIB32_VERSION=ON -DTARGET_LIB64_VERSION=ON; then
-        print_fail "both legacy bitness flags ON was accepted"
+
+    # The deprecated spellings must keep working, because integrator recipes
+    # already use them. They are pinned here so they cannot drift: an alias that
+    # stops aliasing changes the protocol of every build that still passes the
+    # old name, silently and only on the device.
+    if probe_switches "$d" -DBINDER_IPC_32BIT=OFF && configure_selected 64bit 8; then
+        print_pass "deprecated BINDER_IPC_32BIT=OFF still selects protocol 8"
     else
-        print_pass "both legacy bitness flags ON is refused"
+        print_fail "deprecated BINDER_IPC_32BIT=OFF no longer selects protocol 8"
+    fi
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON && configure_selected 64bit 8; then
+        print_pass "deprecated TARGET_LIB64_VERSION=ON still declares a 64-bit target"
+    else
+        print_fail "deprecated TARGET_LIB64_VERSION=ON no longer declares a 64-bit target"
+    fi
+    if probe_switches "$d" -DBINDER_IPC_32BIT=ON; then
+        print_fail "deprecated BINDER_IPC_32BIT=ON accepted against a 64-bit toolchain"
+    else
+        print_pass "deprecated BINDER_IPC_32BIT=ON is refused against a 64-bit toolchain"
+    fi
+    # A half-converted recipe carrying both names must stop, not pick one.
+    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DBINDER_IPC_32BIT=ON; then
+        print_fail "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing was accepted"
+    else
+        print_pass "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing is refused"
+    fi
+    if probe_switches "$d" -DTARGET_LIB32_VERSION=ON -DTARGET_LIB64_VERSION=ON; then
+        print_fail "both deprecated bitness flags ON was accepted"
+    else
+        print_pass "both deprecated bitness flags ON is refused"
     fi
 
     if probe_switches "$d" -DBINDER_PROTOCOL=9; then
@@ -551,28 +561,45 @@ test_2_6() {
 
         # Row A - legacy all-32-bit: a 32-bit kernel at 4.17 or older with
         # CONFIG_ANDROID_BINDER_IPC_32BIT=y.
-        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=ON \
+        if probe_switches "$d" "${m32[@]}" -DTARGET_BITNESS=32 -DBINDER_PROTOCOL=7 \
             && configure_selected 32bit 7; then
-            print_pass "Row A (LIB32 + IPC32=ON) configures at protocol 7"
+            print_pass "Row A (BITNESS=32 + PROTOCOL=7) configures at protocol 7"
         else
-            print_fail "Row A (LIB32 + IPC32=ON) did not configure"
+            print_fail "Row A (BITNESS=32 + PROTOCOL=7) did not configure"
             tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # The deprecated spelling of row A, which is the one that inverts:
+        # BINDER_IPC_32BIT=ON is protocol 7. Pinned on a 32-bit toolchain
+        # because that is the only place protocol 7 can be reached at all.
+        if probe_switches "$d" "${m32[@]}" -DBINDER_IPC_32BIT=ON \
+            && configure_selected 32bit 7; then
+            print_pass "deprecated BINDER_IPC_32BIT=ON still selects protocol 7"
+        else
+            print_fail "deprecated BINDER_IPC_32BIT=ON no longer selects protocol 7"
         fi
 
         # Row B - 32-bit userspace on a protocol-8 kernel: every 32-bit kernel
         # from 4.18, and 32-bit middleware on any 64-bit kernel.
-        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF \
+        if probe_switches "$d" "${m32[@]}" -DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8 \
             && configure_selected 32bit 8; then
-            print_pass "Row B (LIB32 + IPC32=OFF) configures at protocol 8"
+            print_pass "Row B (BITNESS=32 + PROTOCOL=8) configures at protocol 8"
         else
-            print_fail "Row B (LIB32 + IPC32=OFF) did not configure"
+            print_fail "Row B (BITNESS=32 + PROTOCOL=8) did not configure"
             tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON \
+            && configure_selected 32bit 8; then
+            print_pass "deprecated TARGET_LIB32_VERSION=ON still declares a 32-bit target"
+        else
+            print_fail "deprecated TARGET_LIB32_VERSION=ON no longer declares a 32-bit target"
         fi
 
         # Protocol 8 is the default on every toolchain (#72). Bitness cannot
         # select the protocol, so a toolchain-derived default had to be wrong
         # somewhere; defaulting to 8 puts the silent answer where every
-        # supported platform already is, and leaves row A to state ON.
+        # supported platform already is, and leaves row A to state its switch.
         if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 8; then
             print_pass "A 32-bit toolchain defaults to protocol 8 - the protocol, on every toolchain"
         else
@@ -710,7 +737,7 @@ test_8() {
     if run_cmake_build build-target-cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_HOST_AIDL=OFF \
-        -DTARGET_LIB64_VERSION=ON; then
+        -DBINDER_PROTOCOL=8; then
         check_warnings_errors /tmp/cmake_target_build.log "Direct CMake build (BUILD.md)"
         check_file_exists "./build-target-cmake/libbinder.so" "libbinder.so (CMake build)"
     else
@@ -727,7 +754,7 @@ test_9() {
     if run_cmake_build build-target-cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_HOST_AIDL=OFF \
-        -DTARGET_LIB64_VERSION=ON && \
+        -DBINDER_PROTOCOL=8 && \
        run_cmake_install build-target-cmake; then
         check_warnings_errors /tmp/cmake_target_build.log "Direct CMake build + install"
         check_file_exists "./build-target-cmake/libbinder.so" "libbinder.so (CMake build)"
@@ -810,7 +837,7 @@ test_11() {
     # error. rdk-halif-aidl's equivalent tests pass it for the same reason.
     if sc docker run --local rdk-kirkstone \
         ". /opt/toolchains/rdk-glibc-x86_64-arm-toolchain/environment-setup-armv7vet2hf-neon-oe-linux-gnueabi && \
-        export TARGET_LIB32_VERSION=ON && \
+        export TARGET_BITNESS=32 && \
         ./build-linux-binder-aidl.sh no-host-aidl" \
         >/tmp/docker_cross_build.log 2>&1; then
         print_pass "SC Docker cross-compilation completed"

@@ -91,7 +91,7 @@ export CXX=arm-linux-gnueabihf-g++
 export CFLAGS="--sysroot=/path/to/sysroot -march=armv7-a -mfpu=neon"
 export CXXFLAGS="--sysroot=/path/to/sysroot -march=armv7-a -mfpu=neon"
 export LDFLAGS="--sysroot=/path/to/sysroot"
-export TARGET_BITNESS=32            # or the old TARGET_LIB32_VERSION=ON
+export TARGET_BITNESS=32            # optional: assert the toolchain is 32-bit
 ./build-linux-binder-aidl.sh
 ```
 
@@ -122,9 +122,28 @@ These are automatically passed to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPIL
 | `LDFLAGS` | Linker flags | None |
 | `BUILD_TYPE` | `Debug` or `Release` | `Release` |
 | `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
-| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | Accepted as aliases: `TARGET_LIB32_VERSION=ON` is `TARGET_BITNESS=32` | follows the toolchain |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
-| `BINDER_IPC_32BIT` | Accepted as an alias: `ON` is protocol 7, `OFF` is protocol 8 | `OFF` |
+
+#### Deprecated spellings
+
+Still honoured, so an existing recipe keeps working. New builds use the
+switches above.
+
+| Deprecated | Write instead | Why it was replaced |
+|------------|---------------|---------------------|
+| `TARGET_LIB32_VERSION=ON` | `TARGET_BITNESS=32` | "VERSION" suggests a version number, and two booleans for one binary fact can disagree with each other |
+| `TARGET_LIB64_VERSION=ON` | `TARGET_BITNESS=64` | as above |
+| `BINDER_IPC_32BIT=ON` | `BINDER_PROTOCOL=7` | it names the legacy mode rather than the protocol, so it reads backwards — `OFF` means protocol 8 |
+| `BINDER_IPC_32BIT=OFF` | `BINDER_PROTOCOL=8` | as above |
+
+Passing a deprecated spelling alongside its replacement is a configure error
+when the two disagree, so a half-converted recipe stops rather than silently
+picking one.
+
+`BINDER_IPC_32BIT` survives as the **compile define** and as the kernel's
+Kconfig symbol — `CONFIG_ANDROID_BINDER_IPC_32BIT`, and the `#ifdef` in
+`linux/android/binder.h` that sets `binder_size_t`'s width. Only its use as a
+build switch is deprecated.
 
 ### Examples
 
@@ -269,7 +288,7 @@ the same 4.9 kernel version can sit in different rows.
 
 **Row A is the one that must state its switch.** Protocol 8 is the default on
 every toolchain, so rows B and C are what a build inherits without asking. A
-legacy platform is the exception and passes `-DBINDER_IPC_32BIT=ON` explicitly.
+legacy platform is the exception and passes `-DBINDER_PROTOCOL=7` explicitly.
 Protocol 8 carries 64-bit wire *fields*, which a 32-bit process fills by
 zero-extension — it is the mixed-capable protocol, not the 64-bit protocol.
 
@@ -346,38 +365,47 @@ The following tables list CMake variables for **direct CMake invocation in produ
 |----------|-------------|---------|-----------|
 | `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `OFF` | Optional - already `OFF`; a production spec states it anyway |
 
-#### Architecture Selection (One Required)
+#### Wire protocol and target bitness
 
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
-| `TARGET_LIB64_VERSION` | Declare a 64-bit target (forces `TARGET_LIB32_VERSION=OFF`) | `OFF` | Use for aarch64, x86_64 |
-| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
-| `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` | Accepted as aliases: `TARGET_LIB32_VERSION=ON` is `TARGET_BITNESS=32` | follows the toolchain | Use for armhf, i686 |
-| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
-| `BINDER_IPC_32BIT` | Accepted as an alias: `ON` is protocol 7, `OFF` is protocol 8 | `OFF` | Must match the target kernel |
+| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain | Must match the target kernel |
+| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain | Optional assertion; most builds omit it |
 
-**Note:** Set **either** `TARGET_LIB64_VERSION=ON` **or** `TARGET_LIB32_VERSION=ON`, not both.
+The deprecated spellings of both — `BINDER_IPC_32BIT` and the
+`TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` pair — are listed under
+[Deprecated spellings](#deprecated-spellings).
 
-**The ELF class comes from your compiler, not from these flags.** `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` add no `-m32` / `-m64`; they declare which target you are building for, and their functional effect is to set the default for `BINDER_IPC_32BIT`. Bitness follows `CC` / `CXX` (or the Yocto toolchain).
+**The ELF class comes from your compiler, not from a switch.** `TARGET_BITNESS`
+adds no `-m32` / `-m64` and cannot select anything: it *declares* what the
+toolchain is meant to be, and the build stops if `CC` / `CXX` disagrees. Pass it
+when you want a cross-compile that silently fell back to the host compiler to
+fail; leave it out otherwise, and bitness simply follows `CC` / `CXX` (or the
+Yocto toolchain).
 
-**Important - these are two independent axes:**
+**These are two independent axes:**
 
-- `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` declare the **target ABI**, and follow your *userspace* architecture.
-- `BINDER_IPC_32BIT` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
+- `TARGET_BITNESS` declares the **target ABI**, and follows your *userspace* architecture.
+- `BINDER_PROTOCOL` selects the **binder wire protocol**, and follows the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`.
 
-Both defaults are read from the compiler's pointer size, so an unqualified build matches the toolchain it was given: a 32-bit cross-compile selects protocol 7, a 64-bit one selects protocol 8. State `BINDER_IPC_32BIT` explicitly whenever the wire protocol must differ from that.
+**The protocol default is 8 on every toolchain, and bitness does not move it.**
+The same 32-bit toolchain is correct at protocol 7 on a legacy kernel and wrong
+at it everywhere else, so a toolchain-derived default has to be wrong somewhere.
+Defaulting to 8 puts the silent answer where every supported platform already
+is, and leaves the legacy build as the one that must state
+`-DBINDER_PROTOCOL=7`.
 
 **Protocol 7 requires a 32-bit toolchain.** It carries 32-bit binder handles, so a 64-bit pointer model cannot be represented in them — and no 64-bit kernel serves protocol 7 in any case (`CONFIG_ANDROID_BINDER_IPC_32BIT` is `depends on !64BIT` upstream). The two valid pairings are therefore:
 
-| Toolchain | `BINDER_IPC_32BIT` | Protocol |
+| Toolchain | `BINDER_PROTOCOL` | Protocol |
 | --- | --- | --- |
-| 32-bit | `ON` (default) or `OFF` | 7 or 8 |
-| 64-bit | `OFF` (default) | 8 |
+| 32-bit | `8` (default) or `7` | 8 or 7 |
+| 64-bit | `8` (default) | 8 |
 
-`-DBINDER_IPC_32BIT=ON` against a 64-bit compiler has no valid meaning, and CMake refuses to configure it:
+`-DBINDER_PROTOCOL=7` against a 64-bit compiler has no valid meaning, and CMake refuses to configure it:
 
 ```text
-BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
+BINDER_PROTOCOL=7 with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8).
 ```
 
 **32-bit userspace on a 64-bit kernel** — the recommended configuration on a 64-bit platform — is the 32-bit toolchain at protocol 8, which is the default. The 64-bit kernel handles syscall translation over the compat path. See [Bitness is per-process; the protocol version governs interop](#bitness-is-per-process-the-protocol-version-governs-interop) for the full selection table.
@@ -586,16 +614,17 @@ Generates interface C++ offline; the result is committed and never shipped.
 
 #### Minimal Required Variables Summary
 
-A **production build** states these three:
+A **production build** states these two:
 
 1. `-DBUILD_HOST_AIDL=OFF` (exclude the AIDL compiler - the build uses pre-generated C++ code).
    This is already the default; a build spec states its switches rather than inheriting them.
-2. **One of:** `-DTARGET_LIB64_VERSION=ON` **or** `-DTARGET_LIB32_VERSION=ON` - the ELF class,
-   which follows the toolchain.
-3. `-DBINDER_IPC_32BIT=ON|OFF` - the wire protocol, which follows the **kernel**, not the
-   toolchain. It defaults from the toolchain, and on a 32-bit toolchain that default is protocol 7,
-   which is wrong on every protocol-8 kernel. See the row table above for which value your platform
-   takes, and derive it from the kernel's resolved `.config` where the recipe can.
+2. `-DBINDER_PROTOCOL=7|8` - the wire protocol, which follows the **kernel**, not the
+   toolchain. See the row table above for which value your platform takes, and derive it from
+   the kernel's resolved `.config` where the recipe can.
+
+The ELF class is not among them: it comes from `CC` / `CXX`, and nothing here can
+change it. `-DTARGET_BITNESS=32|64` is available as an optional assertion for a
+build that should *stop* if the toolchain is not what was expected.
 
 ### Manual/Development Build (Wrapper Scripts)
 
@@ -711,12 +740,12 @@ What must match across MW, vendor, and kernel is **not** compile bitness but the
 **binder protocol version**. libbinder verifies it with a strict *equality*
 check when it opens `/dev/binder` — the open fails if the kernel's protocol
 version is not exactly the library's. The version is selected at build time by
-`BINDER_IPC_32BIT`:
+`BINDER_PROTOCOL`:
 
-| Build | `BINDER_IPC_32BIT` | `binder_uintptr_t` | Protocol |
+| Build | `BINDER_PROTOCOL` | `binder_uintptr_t` | Protocol |
 | --- | --- | --- | --- |
-| legacy 32-bit | set | 32-bit | **7** |
-| modern (any process bitness) | unset | 64-bit | **8** |
+| legacy 32-bit | `7` | 32-bit | **7** |
+| modern (any process bitness) | `8` (default) | 64-bit | **8** |
 
 A 32-bit process can run protocol **8** (64-bit binder handles inside a 32-bit
 process) — that is how a 32-bit and a 64-bit process interoperate on one kernel.
@@ -735,10 +764,10 @@ Read the kernel, then set the build flag to match it:
 
 | Kernel | `CONFIG_ANDROID_BINDER_IPC_32BIT` | libbinder build | Protocol |
 | --- | --- | --- | --- |
-| 32-bit, ≤ 4.17 | `=y` | `-DBINDER_IPC_32BIT=ON` | 7 |
-| 32-bit, ≤ 4.17 | unset | `-DBINDER_IPC_32BIT=OFF` | 8 |
-| 64-bit, any version | unselectable (`depends on !64BIT`) | `-DBINDER_IPC_32BIT=OFF` | 8 |
-| any, ≥ 4.18 | option removed | `-DBINDER_IPC_32BIT=OFF` | 8 |
+| 32-bit, ≤ 4.17 | `=y` | `-DBINDER_PROTOCOL=7` | 7 |
+| 32-bit, ≤ 4.17 | unset | `-DBINDER_PROTOCOL=8` | 8 |
+| 64-bit, any version | unselectable (`depends on !64BIT`) | `-DBINDER_PROTOCOL=8` | 8 |
+| any, ≥ 4.18 | option removed | `-DBINDER_PROTOCOL=8` | 8 |
 
 Read it off a device with the commands under
 [Critical: read `CONFIG_ANDROID_BINDER_IPC_32BIT` off the device](#critical-read-config_android_binder_ipc_32bit-off-the-device).
@@ -752,17 +781,19 @@ Binder driver protocol(7) does not match user space protocol(8)!
 
 | Platform | MW | Vendor | Protocol | Build | Kernel |
 | --- | --- | --- | --- | --- | --- |
-| All-32-bit userspace | 32-bit | 32-bit | 7 | no flags needed — a 32-bit toolchain defaults `BINDER_IPC_32BIT=ON` | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
-| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
-| All-64-bit userspace | 64-bit | 64-bit | 8 | `-DTARGET_LIB64_VERSION=ON` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
+| All-32-bit userspace | 32-bit | 32-bit | 7 | `-DBINDER_PROTOCOL=7` — the one row that must state it | 32-bit, ≤ 4.17, `CONFIG_ANDROID_BINDER_IPC_32BIT=y` |
+| Mixed (32-bit MW + 64-bit vendor) | 32-bit | 64-bit | 8 | `-DBINDER_PROTOCOL=8` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
+| All-64-bit userspace | 64-bit | 64-bit | 8 | `-DBINDER_PROTOCOL=8` | `CONFIG_ANDROID_BINDER_IPC_32BIT` unset or absent |
 
-Both defaults come from the toolchain's pointer size, not from each other: a
-32-bit compiler defaults `BINDER_IPC_32BIT` to `ON`, so the mixed configuration
-passes `-DBINDER_IPC_32BIT=OFF` explicitly. A 64-bit toolchain rejects
-`BINDER_IPC_32BIT=ON` outright.
+The ELF class is absent from the Build column because it is not a switch: it
+comes from the cross-toolchain in `CC` / `CXX`. Protocol 8 is the default on
+every toolchain, so rows two and three restate what they would get anyway — a
+build spec states its switches rather than inheriting them. Row one is the only
+one where the default is wrong, and a 64-bit toolchain rejects
+`-DBINDER_PROTOCOL=7` outright.
 
 **Code calling the low-level `Parcel` API must agree with libbinder about
-`BINDER_IPC_32BIT`.** The installed `binder/Parcel.h` selects the
+the protocol.** The installed `binder/Parcel.h` selects the
 `binder_size_t` typedef from it, and that type appears in the signatures of
 `ipcSetDataReference` and `ipcObjects`, so a consumer built with the other value
 gets a different mangled name and fails to link. Targets linking the `binder`
@@ -827,8 +858,8 @@ grep BINDER .config                         # the kernel build tree
 
 `/proc/config.gz` exists only when the kernel was built with `CONFIG_IKCONFIG_PROC=y`, which many embedded kernels omit — fall through to the other two, or ask whoever supplies the kernel. On a running device, `getconf LONG_BIT` inside a shell reports userspace bitness, not the kernel's, so it does not answer this question.
 
-- `=y` → the kernel serves protocol **7**. Build libbinder with `-DBINDER_IPC_32BIT=ON`.
-- unset or absent → the kernel serves protocol **8**. Build libbinder with `-DBINDER_IPC_32BIT=OFF`.
+- `=y` → the kernel serves protocol **7**. Build libbinder with `-DBINDER_PROTOCOL=7`.
+- unset or absent → the kernel serves protocol **8**. Build libbinder with `-DBINDER_PROTOCOL=8`.
 
 Only a **32-bit kernel at 4.17 or older** can be protocol 7: upstream declares the option `depends on !64BIT` and removed it in 4.18. A 64-bit kernel is always protocol 8 and serves 32-bit userspace over the compat path.
 
@@ -1044,8 +1075,7 @@ inherit cmake systemd
 # CMake configuration - production target build only
 EXTRA_OECMAKE = " \
     -DBUILD_HOST_AIDL=OFF \
-    -DTARGET_LIB64_VERSION=${@bb.utils.contains('TUNE_FEATURES', 'aarch64', 'ON', 'OFF', d)} \
-    -DTARGET_LIB32_VERSION=${@bb.utils.contains('TUNE_FEATURES', 'aarch64', 'OFF', 'ON', d)} \
+    -DBINDER_PROTOCOL=8 \
     -DCMAKE_INSTALL_PREFIX=${prefix} \
 "
 
@@ -1096,7 +1126,7 @@ INSANE_SKIP:${PN}-dev = "dev-elf"
 
 - ✅ `BUILD_HOST_AIDL=OFF` flag (exclude AIDL compiler from production build)
 - ✅ `clone-android-binder-repo.sh` script invocation
-- ✅ `TARGET_LIB64_VERSION` / `TARGET_LIB32_VERSION` based on architecture
+- ✅ `BINDER_PROTOCOL` stated explicitly, from the target kernel's config
 - ✅ `SYSTEMD_AUTO_ENABLE` for automatic service enablement
 
 **Unchanged:**
