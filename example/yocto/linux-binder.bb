@@ -133,5 +133,17 @@ do_install:append() {
 SYSTEMD_SERVICE:${PN} = "servicemanager.service"
 SYSTEMD_AUTO_ENABLE = "enable"
 
+# These libraries are UNVERSIONED - the SDK ships a plain libbinder.so, with no
+# SONAME and no libbinder.so.1 beside it. That matters for packaging: OE's
+# default -dev FILES claim ${libdir}/lib*.so, and -dev is ordered BEFORE ${PN}
+# in PACKAGES, so -dev takes the real objects and do_package_qa rejects them:
+#
+#   QA Issue: -dev package libbinder-dev contains non-symlink .so
+#             '/usr/lib/libbinder.so' [dev-elf]
+#
+# So -dev is ASSIGNED rather than appended, dropping the default .so glob. The
+# runtime package keeps the libraries, which is correct - unversioned, they are
+# the runtime artifact, not a development symlink. Consumers still link against
+# them because do_populate_sysroot stages from ${D}, not from the -dev package.
 FILES:${PN} += "${libdir}/lib*.so*"
-FILES:${PN}-dev += "${includedir}/*"
+FILES:${PN}-dev = "${includedir}/*"
