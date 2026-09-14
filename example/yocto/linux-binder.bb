@@ -28,6 +28,9 @@
 
 SUMMARY = "Linux Binder IPC runtime (libbinder, libutils, servicemanager)"
 LICENSE = "Apache-2.0"
+# A non-CLOSED licence needs a checksum, or do_populate_lic fails before the
+# build starts. Points at the LICENSE file in the fetched source.
+LIC_FILES_CHKSUM = "file://LICENSE;md5=175792518e4ac015ab6696d16c4f607e"
 
 # files/ sits beside this recipe and holds the systemd unit. Without this a
 # layer that copies only the .bb fails during fetch, before anything builds.

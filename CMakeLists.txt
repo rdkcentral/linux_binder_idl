@@ -230,16 +230,34 @@ if (DEFINED TARGET_LIB32_VERSION AND DEFINED TARGET_LIB64_VERSION
         "spellings of one choice; set -DTARGET_BITNESS=32 or -DTARGET_BITNESS=64.")
 endif ()
 
+# What the old spellings ask for, if either was passed. Left unset when neither
+# was, which is not the same as asking for the toolchain's own width.
+set(_legacy_bitness "")
+if (DEFINED TARGET_LIB64_VERSION AND TARGET_LIB64_VERSION)
+    set(_legacy_bitness 64)
+elseif (DEFINED TARGET_LIB32_VERSION)
+    if (TARGET_LIB32_VERSION)
+        set(_legacy_bitness 32)
+    else ()
+        set(_legacy_bitness 64)
+    endif ()
+endif ()
+
+# Both given. They must agree, or the caller believes two different things -
+# the same rule the protocol switch applies below. Silently letting the new
+# name win would build the opposite of what a half-converted recipe asked for.
+if (DEFINED TARGET_BITNESS AND NOT "${_legacy_bitness}" STREQUAL ""
+    AND NOT "${TARGET_BITNESS}" STREQUAL "${_legacy_bitness}")
+    message(FATAL_ERROR
+        "TARGET_BITNESS=${TARGET_BITNESS} and TARGET_LIB32_VERSION/"
+        "TARGET_LIB64_VERSION (${_legacy_bitness}-bit) disagree. The "
+        "TARGET_LIB*_VERSION pair is the old spelling of the same switch; set one.")
+endif ()
+
 # Fold the old spellings into the new one, then forget them.
 if (NOT DEFINED TARGET_BITNESS)
-    if (DEFINED TARGET_LIB64_VERSION AND TARGET_LIB64_VERSION)
-        set(TARGET_BITNESS 64)
-    elseif (DEFINED TARGET_LIB32_VERSION)
-        if (TARGET_LIB32_VERSION)
-            set(TARGET_BITNESS 32)
-        else ()
-            set(TARGET_BITNESS 64)
-        endif ()
+    if (NOT "${_legacy_bitness}" STREQUAL "")
+        set(TARGET_BITNESS "${_legacy_bitness}")
     else ()
         # Nothing declared: follow the compiler.
         math(EXPR TARGET_BITNESS "${CMAKE_SIZEOF_VOID_P} * 8")

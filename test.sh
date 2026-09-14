@@ -538,6 +538,20 @@ test_2_6() {
     else
         print_pass "both deprecated bitness flags ON is refused"
     fi
+    # The bitness pair gets the same disagreement check as the protocol pair.
+    # Letting the new name silently win would build the opposite of what a
+    # half-converted recipe asked for.
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DTARGET_LIB32_VERSION=ON; then
+        print_fail "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing was accepted"
+    else
+        print_pass "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing is refused"
+    fi
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DTARGET_LIB64_VERSION=ON \
+        && configure_selected 64bit 8; then
+        print_pass "TARGET_BITNESS and TARGET_LIB64_VERSION agreeing is accepted"
+    else
+        print_fail "TARGET_BITNESS and TARGET_LIB64_VERSION agreeing was refused"
+    fi
 
     if probe_switches "$d" -DBINDER_PROTOCOL=9; then
         print_fail "BINDER_PROTOCOL=9 was accepted; only 7 and 8 exist"
@@ -930,8 +944,11 @@ test_14() {
     fi
     echo "Booting the QEMU kernel matrix..."
     local log=/tmp/qemu_matrix.log
-    ./tests/qemu/run-qemu-test.sh >"${log}" 2>&1
-    local rc=$?
+    # `set -e` is on, so the exit status has to be captured in a context that
+    # tolerates failure. Run it bare and a failed boot aborts the whole suite
+    # here, before any of the diagnostics below are printed.
+    local rc=0
+    ./tests/qemu/run-qemu-test.sh >"${log}" 2>&1 || rc=$?
     sed -n 's/^  \(PASS\|FAIL\|SKIP\)  /  \1  /p' "${log}"
 
     # A skip here is a FAILURE. The matrix is the only thing that proves the
@@ -945,11 +962,32 @@ test_14() {
         echo "         or pass --no-qemu to skip this deliberately."
         return 0
     fi
-    if [ "${rc}" -eq 0 ]; then
-        print_pass "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
-    else
-        print_fail "QEMU kernel matrix: $(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+    local summary; summary="$(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+
+    # The harness exits 0 when it booted nothing: a variant whose qemu binary,
+    # busybox or 32-bit toolchain is missing is skipped individually, and those
+    # skips never reach the top-level SKIP line checked above. Counting that as
+    # a pass is the same failure as treating the whole-matrix skip as one - a
+    # green result meaning no kernel was booted. Read the counts, not just rc.
+    local booted skipped
+    booted="$(sed -n 's/.*qemu binder test: \([0-9]*\) passed.*/\1/p' "${log}" | head -n 1)"
+    skipped="$(sed -n 's/.*qemu binder test: .* \([0-9]*\) skipped.*/\1/p' "${log}" | head -n 1)"
+
+    if [ "${rc}" -ne 0 ]; then
+        print_fail "QEMU kernel matrix: ${summary}"
         tail -20 "${log}" | sed 's/^/        /'
+    elif [ "${booted:-0}" -eq 0 ]; then
+        print_fail "QEMU kernel matrix booted nothing: ${summary}"
+        echo "         every variant skipped its prerequisites — install the missing"
+        echo "         qemu-system-* binaries and run ./tests/qemu/build-kernels.sh,"
+        echo "         or pass --no-qemu to skip this deliberately."
+        tail -20 "${log}" | sed 's/^/        /'
+    elif [ "${skipped:-0}" -ne 0 ]; then
+        print_fail "QEMU kernel matrix is incomplete: ${summary}"
+        echo "         a skipped variant is a kernel/userspace pairing nothing proved."
+        sed -n 's/^  SKIP  /         SKIP  /p' "${log}"
+    else
+        print_pass "QEMU kernel matrix: ${summary}"
     fi
 }
 

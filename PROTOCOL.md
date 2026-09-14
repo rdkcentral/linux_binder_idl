@@ -503,14 +503,16 @@ platform's protocol is traced end to end.
 
 ## Verification
 
-`tests/qemu/run-qemu-test.sh` boots each kernel twice — once with both switches pinned, proving
-the protocols interoperate, and once with neither set, exercising what the build derives from the
-toolchain alone.
+`tests/qemu/run-qemu-test.sh` boots each kernel at least twice — once with both switches pinned,
+proving the protocols interoperate, and once with neither set, exercising what the build derives
+from the toolchain alone. A 64-bit protocol-8 kernel gets three more: 32-bit userspace over it,
+which is the driver's compat path, and a 32-bit and a 64-bit process transacting with each other
+in both directions.
 
 | Kernel | Arch | Protocol | Switches | Result |
 | --- | --- | --- | --- | --- |
 | 4.9.337-ipc32 | i386 | 7 | explicit | PASS — `servicemanager round-trip 41->42` |
-| 4.9.337-ipc32 | i386 | 7 | derived | PASS — derives 8, as documented |
+| 4.9.337-ipc32 | i386 | 7 | derived | PASS — derives 8 and the boot is refused: `protocol(7) does not match user space protocol(8)` |
 | 4.9.337-i386 | i386 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
 | 4.9.337-i386 | i386 | 8 | derived | PASS — `servicemanager round-trip 41->42` |
 | 5.4.290 | x86_64 | 8 | explicit | PASS — `servicemanager round-trip 41->42` |
