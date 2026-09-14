@@ -258,16 +258,28 @@ FILES:${PN}-dev = "${includedir}/*"
 
 ### Which row is your platform?
 
-The recipe above derives both switches, so it needs no per-platform override. What
-it resolves to is one of exactly three configurations. Bitness is a property of
-the role; the wire protocol is a property of the platform — there is one kernel,
-so it serves one protocol, and every role on the device speaks that one.
+The recipe above states protocol 8 and lets bitness follow the cross-toolchain,
+which is right on every supported platform. There are three configurations in
+all, and the row below tells you whether yours is one the recipe already covers.
+Bitness is a property of the role; the wire protocol is a property of the
+platform — there is one kernel, so it serves one protocol, and every role on the
+device speaks that one.
 
-| | The kernel it matches | Switches |
-| --- | ------ | -------- |
-| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=7` |
-| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8` |
-| **C** — 64-bit userspace | any 64-bit kernel | `-DTARGET_BITNESS=64 -DBINDER_PROTOCOL=8` |
+| | The kernel it matches | Protocol switch | ELF class |
+| --- | ------ | -------- | --- |
+| **A** — legacy all-32-bit | a 32-bit kernel whose resolved config has `CONFIG_ANDROID_BINDER_IPC_32BIT=y` | `-DBINDER_PROTOCOL=7` | from a 32-bit toolchain |
+| **B** — 32-bit userspace on a protocol-8 kernel | every other 32-bit userspace: a 32-bit kernel with that symbol unset or absent, and 32-bit middleware on a 64-bit kernel | `-DBINDER_PROTOCOL=8` | from a 32-bit toolchain |
+| **C** — 64-bit userspace | any 64-bit kernel | `-DBINDER_PROTOCOL=8` | from a 64-bit toolchain |
+
+Only row A differs from what the recipe above already does. The ELF class has
+its own column because it is not a switch: point the build at the right
+cross-compiler and it follows. `-DTARGET_BITNESS=32|64` can be added to assert
+it, for a build that should stop when the toolchain is not what was expected.
+
+To derive the protocol from the kernel instead of stating it — for a fleet that
+still has row A in it — see
+[Deriving the protocol from the kernel](#deriving-the-protocol-from-the-kernel)
+above.
 
 **The kernel version does not decide the row — its config does.** Being 32-bit
 at 4.17 or older is what makes protocol 7 *possible*; it is not what makes it

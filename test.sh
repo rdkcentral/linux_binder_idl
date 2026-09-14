@@ -623,6 +623,41 @@ test_2_6() {
         print_info "No -m32 toolchain - skipping rows A and B (32-bit userspace)"
     fi
 
+    # The wrapper has to enforce the same disagreement rule as CMake, because it
+    # clears the deprecated names from the cache before invoking CMake - so
+    # CMake's own guards can never fire on a wrapper build. Without these the
+    # wrapper would silently accept what direct CMake rejects.
+    #
+    # --help exits before anything is built, so these cost a process each.
+    wrapper_refuses() {   # <description> <VAR=VAL> ...
+        local what="$1"; shift
+        if env "$@" ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_fail "wrapper accepted ${what}, but CMake refuses it"
+        else
+            print_pass "wrapper refuses ${what}"
+        fi
+    }
+    wrapper_accepts() {   # <description> <VAR=VAL> ...
+        local what="$1"; shift
+        if env "$@" ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_pass "wrapper accepts ${what}"
+        else
+            print_fail "wrapper refused ${what}, which is a valid combination"
+        fi
+    }
+    wrapper_refuses "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing" \
+        BINDER_PROTOCOL=8 BINDER_IPC_32BIT=ON
+    wrapper_refuses "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing" \
+        TARGET_BITNESS=64 TARGET_LIB32_VERSION=ON
+    wrapper_refuses "both deprecated bitness flags ON" \
+        TARGET_LIB32_VERSION=ON TARGET_LIB64_VERSION=ON
+    wrapper_refuses "a non-boolean BINDER_IPC_32BIT" BINDER_IPC_32BIT=yes
+    wrapper_refuses "an out-of-range BINDER_PROTOCOL" BINDER_PROTOCOL=9
+    wrapper_accepts "the two protocol spellings agreeing" \
+        BINDER_PROTOCOL=8 BINDER_IPC_32BIT=OFF
+    wrapper_accepts "the two bitness spellings agreeing" \
+        TARGET_BITNESS=64 TARGET_LIB64_VERSION=ON
+
     rm -rf "$d" 2>/dev/null || true
 }
 
