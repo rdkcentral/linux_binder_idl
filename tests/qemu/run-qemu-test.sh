@@ -204,9 +204,17 @@ prepare_variant() {   # <arch> <protocol> <busybox> [derive]
     # Derived runs pass neither flag; the toolchain in CC/CXX is the only input.
     local -a proto_env=(TARGET_BITNESS="${bits}" BINDER_PROTOCOL="${proto}")
     [ -n "${derive}" ] && proto_env=()
+    # Emptying the array removes what this function would have passed, but the
+    # child still INHERITS anything the caller exported - so a BINDER_PROTOCOL=7
+    # sitting in the invoking shell would make a "derived" row build protocol 7
+    # and quietly invalidate the negative-case assertion below. Unset every
+    # spelling first, then apply the explicit assignments, so a derived run is
+    # genuinely derived and an explicit one gets exactly what is named here.
     echo "  building ${arch} protocol-${proto} binder SDK${derive:+ (derived from the toolchain)} ..."
     if ! (cd "${REPO_ROOT}" && \
-          env BUILD_DIR="${sdk_build}" OUT_DIR="${sdk_out}" \
+          env -u BINDER_PROTOCOL -u BINDER_IPC_32BIT \
+              -u TARGET_BITNESS -u TARGET_LIB32_VERSION -u TARGET_LIB64_VERSION \
+              BUILD_DIR="${sdk_build}" OUT_DIR="${sdk_out}" \
           CC="${CC}${mflag:+ ${mflag}}" CXX="${CXX}${mflag:+ ${mflag}}" \
           "${proto_env[@]}" \
           ./build-linux-binder-aidl.sh no-host-aidl) >"${WORK}/sdk-${key}.log" 2>&1; then

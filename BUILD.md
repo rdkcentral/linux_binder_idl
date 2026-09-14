@@ -140,6 +140,16 @@ Passing a deprecated spelling alongside its replacement is a configure error
 when the two disagree, so a half-converted recipe stops rather than silently
 picking one.
 
+!!! warning "A reused build directory keeps the switch you passed last time"
+    `-D` writes a CMake cache entry, so a build directory that once configured
+    `-DBINDER_PROTOCOL=7` **stays** at protocol 7 on every later configure that
+    omits the switch — the default only applies when nothing is cached. This is
+    ordinary CMake behaviour, but here the result builds and links and then
+    kills every binder process on a protocol-8 device, so selecting protocol 7
+    prints a warning naming the cache as a possible source. Pass the switch
+    again, or configure into a fresh build directory. `build-linux-binder-aidl.sh`
+    clears these entries on every run; a direct CMake or BitBake build does not.
+
 `BINDER_IPC_32BIT` survives as the **compile define** and as the kernel's
 Kconfig symbol — `CONFIG_ANDROID_BINDER_IPC_32BIT`, and the `#ifdef` in
 `linux/android/binder.h` that sets `binder_size_t`'s width. Only its use as a

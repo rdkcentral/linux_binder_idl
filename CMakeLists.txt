@@ -887,6 +887,23 @@ if (BUILD_ENV_YOCTO OR NOT BUILD_HOST_AIDL)
     # through CMake must define it themselves; BUILD.md says so.
     if (BINDER_IPC_32BIT)
         message("  binder wire protocol: 7 (BINDER_IPC_32BIT=1)")
+        # Protocol 7 is the legacy case and never the default, so reaching it is
+        # always a decision - state it loudly. It is also the value that can
+        # arrive without being asked for on this run: -D writes a cache entry,
+        # so a build directory that once configured protocol 7 keeps it on every
+        # later configure that omits the switch. That is ordinary CMake cache
+        # behaviour, but the consequence here is a library that builds and links
+        # and then kills every binder process on a protocol-8 device, so it is
+        # worth saying rather than leaving in one line of output.
+        message(WARNING
+            "Building the LEGACY binder wire protocol 7. It must match the target "
+            "kernel: only a 32-bit kernel at 4.17 or older with "
+            "CONFIG_ANDROID_BINDER_IPC_32BIT=y serves it, and a mismatch terminates "
+            "every binder process at startup. Protocol 8 is the default on every "
+            "toolchain, so this value was either passed on this configure or is "
+            "still in the cache from an earlier one in this build directory - "
+            "pass -DBINDER_PROTOCOL=8, or configure into a fresh build directory, "
+            "if it is not what you meant.")
         target_compile_definitions(binder PUBLIC BINDER_IPC_32BIT=1)
     else ()
         message("  binder wire protocol: 8")

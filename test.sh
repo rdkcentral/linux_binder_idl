@@ -458,6 +458,14 @@ probe_switches() {
     cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
 }
 
+# The same, but REUSING the build directory - which is the whole point when the
+# question is what a second configure inherits from the first through the cache.
+reconfigure_switches() {
+    local dir="$1"
+    shift
+    cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
+}
+
 # Assert on what configure resolved to rather than on cache entries: these
 # switches are plain variables, so -D leaves them typed UNINITIALIZED and the
 # defaulted case leaves no cache entry at all. The messages are the contract.
@@ -569,9 +577,20 @@ test_2_6() {
     fi
 
     # Rows A and B are 32-bit userspace, so they need a working -m32 toolchain.
-    if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null; then
-        rm -f /tmp/binder_m32_probe
-        local m32=(-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32)
+    # Probe the C++ compiler as well: the binder builds C++, and a host with
+    # 32-bit libc but no lib32stdc++ passes a C-only probe and then fails the
+    # rows with CMake errors instead of the documented skip.
+    local have_m32=0
+    local -a m32=()
+    if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null \
+       && echo '#include <string>
+int main(){ std::string s; return s.size(); }' | "${CXX:-g++}" -m32 -x c++ - -o /tmp/binder_m32_probe_cxx 2>/dev/null; then
+        have_m32=1
+        m32=(-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32)
+    fi
+    rm -f /tmp/binder_m32_probe /tmp/binder_m32_probe_cxx 2>/dev/null || true
+
+    if [ "${have_m32}" = "1" ]; then
 
         # Row A - legacy all-32-bit: a 32-bit kernel at 4.17 or older with
         # CONFIG_ANDROID_BINDER_IPC_32BIT=y.
@@ -657,6 +676,39 @@ test_2_6() {
         BINDER_PROTOCOL=8 BINDER_IPC_32BIT=OFF
     wrapper_accepts "the two bitness spellings agreeing" \
         TARGET_BITNESS=64 TARGET_LIB64_VERSION=ON
+
+    # A reused build directory keeps a protocol passed on an earlier configure,
+    # because -D writes a cache entry and the default only applies when nothing
+    # is cached. Ordinary CMake behaviour, but the result here builds, links and
+    # then kills every binder process on a protocol-8 device - so pin both that
+    # it happens (documented in BUILD.md) and that it is announced rather than
+    # silent, and that the wrapper clears it.
+    local reuse=./build-switch-reuse
+    rm -rf "${reuse}" 2>/dev/null || true
+    if [ "${have_m32}" = "1" ] \
+       && probe_switches "${reuse}" "${m32[@]}" -DBINDER_PROTOCOL=7 \
+       && configure_selected 32bit 7; then
+        if reconfigure_switches "${reuse}" "${m32[@]}" && configure_selected 32bit 7; then
+            print_pass "a reused build dir keeps protocol 7 (cache), as BUILD.md states"
+            if grep -q "Building the LEGACY binder wire protocol 7" /tmp/switch_config.log; then
+                print_pass "and says so, naming the cache as a possible source"
+            else
+                print_fail "and does NOT say so - a stale protocol 7 would be silent"
+            fi
+        else
+            print_fail "a reused build dir did not keep protocol 7; BUILD.md's cache warning is now wrong"
+        fi
+        # The wrapper clears the entry, which is why it is the safe path.
+        if env BUILD_DIR="$(pwd)/${reuse}" OUT_DIR="$(pwd)/${reuse}/out" \
+               ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_pass "the wrapper clears the deprecated cache entries on every run"
+        else
+            print_fail "the wrapper failed against a reused build dir"
+        fi
+    else
+        print_info "No -m32 toolchain - skipping the reused-build-dir cache check"
+    fi
+    rm -rf "${reuse}" 2>/dev/null || true
 
     rm -rf "$d" 2>/dev/null || true
 }
@@ -997,32 +1049,42 @@ test_14() {
         echo "         or pass --no-qemu to skip this deliberately."
         return 0
     fi
-    local summary; summary="$(grep -o 'qemu binder test: .*' "${log}" | head -n 1)"
+    # `|| true` because grep returns 1 on no match, and under `set -euo pipefail`
+    # an assignment from a failed pipeline aborts the function - losing exactly
+    # the diagnostics below, in the case where the harness died early and
+    # produced no summary at all.
+    local summary; summary="$(grep -o 'qemu binder test: .*' "${log}" | head -n 1 || true)"
 
     # The harness exits 0 when it booted nothing: a variant whose qemu binary,
     # busybox or 32-bit toolchain is missing is skipped individually, and those
-    # skips never reach the top-level SKIP line checked above. Counting that as
-    # a pass is the same failure as treating the whole-matrix skip as one - a
-    # green result meaning no kernel was booted. Read the counts, not just rc.
+    # skips never reach the top-level SKIP line checked above. A green run that
+    # booted no kernel is the same empty result as the whole-matrix skip, so
+    # read the counts rather than trusting rc alone.
+    #
+    # An individual skip is NOT a failure, though. The 32-bit rows need
+    # tests/install.sh --with-32bit, which is optional by design, so failing on
+    # any skip would make the documented default setup red. They are reported
+    # instead, because a skipped variant is a pairing nothing proved.
     local booted skipped
-    booted="$(sed -n 's/.*qemu binder test: \([0-9]*\) passed.*/\1/p' "${log}" | head -n 1)"
-    skipped="$(sed -n 's/.*qemu binder test: .* \([0-9]*\) skipped.*/\1/p' "${log}" | head -n 1)"
+    booted="$(sed -n 's/.*qemu binder test: \([0-9]*\) passed.*/\1/p' "${log}" | head -n 1 || true)"
+    skipped="$(sed -n 's/.*qemu binder test: .* \([0-9]*\) skipped.*/\1/p' "${log}" | head -n 1 || true)"
 
     if [ "${rc}" -ne 0 ]; then
-        print_fail "QEMU kernel matrix: ${summary}"
+        print_fail "QEMU kernel matrix: ${summary:-no summary - the harness died early}"
         tail -20 "${log}" | sed 's/^/        /'
     elif [ "${booted:-0}" -eq 0 ]; then
-        print_fail "QEMU kernel matrix booted nothing: ${summary}"
+        print_fail "QEMU kernel matrix booted nothing: ${summary:-no summary}"
         echo "         every variant skipped its prerequisites — install the missing"
         echo "         qemu-system-* binaries and run ./tests/qemu/build-kernels.sh,"
         echo "         or pass --no-qemu to skip this deliberately."
         tail -20 "${log}" | sed 's/^/        /'
-    elif [ "${skipped:-0}" -ne 0 ]; then
-        print_fail "QEMU kernel matrix is incomplete: ${summary}"
-        echo "         a skipped variant is a kernel/userspace pairing nothing proved."
-        sed -n 's/^  SKIP  /         SKIP  /p' "${log}"
     else
         print_pass "QEMU kernel matrix: ${summary}"
+        if [ "${skipped:-0}" -ne 0 ]; then
+            print_info "${skipped} matrix variant(s) skipped - pairings nothing proved:"
+            sed -n 's/^  SKIP  /         SKIP  /p' "${log}"
+            echo "         tests/install.sh --with-32bit adds the 32-bit rows."
+        fi
     fi
 }
 
