@@ -55,7 +55,8 @@ do_configure[depends] += "virtual/kernel:do_shared_workdir"
 # Protocol 8, on every platform. It is what every 64-bit kernel serves, what
 # every kernel from 4.18 serves, and what a 32-bit userspace runs perfectly well
 # - it needs 64-bit FIELDS, not a 64-bit anything. Protocol 7 is legacy
-# compatibility and is being retired.
+# compatibility, for a 32-bit kernel at 4.17 or older that still carries
+# CONFIG_ANDROID_BINDER_IPC_32BIT.
 #
 # The ELF class is NOT passed. It follows CC/CXX, which the toolchain already
 # sets, and nothing in the build can change it - so declaring it would only
