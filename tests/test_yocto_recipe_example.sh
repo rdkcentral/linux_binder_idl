@@ -144,7 +144,6 @@ fi
 #    supposed to contain. It passed anyway, because the recipe carries that
 #    snippet as a COMMENT and grep -F matches inside it: a green result standing
 #    on commented-out text rather than on the recipe.
-RECIPE_ALL="$(cat "${RECIPE}")"
 BLOCK="$(awk '/^```bitbake$/{if(!seen){seen=1;f=1;next}} /^```$/{if(f)exit} f' "${BUILD_MD}")"
 if [ -z "${BLOCK}" ]; then
     fail "no bitbake block found in BUILD.md"
@@ -155,14 +154,22 @@ else
     # stay green - the same false-green the extraction above already had to fix.
     # Comment lines in the doc block are matched against the whole recipe,
     # because that is what they are there.
-    ACTIVE="$(grep -v '^[[:space:]]*#' "${RECIPE}")"
+    # Both haystacks are FILES, not pipelines. `printf ... | grep -q` looks
+    # equivalent and is not: grep -q exits at the first match, printf takes
+    # SIGPIPE with the rest still unwritten, and `set -o pipefail` reports the
+    # pipeline as failed - so a line that matched EARLY in the recipe was
+    # reported as drifted while one matching near the end passed. A false
+    # failure that depended on where in the file the match happened to be.
+    ACTIVE_FILE="$(mktemp "${TMPDIR:-/tmp}/binder-recipe-active.XXXXXX")"
+    trap 'rm -f "${ACTIVE_FILE}"' EXIT
+    grep -v '^[[:space:]]*#' "${RECIPE}" > "${ACTIVE_FILE}"
     missing=0
     while IFS= read -r line; do
         [ -z "${line//[[:space:]]/}" ] && continue
         case "${line}" in
-            \#*) printf '%s\n' "${RECIPE_ALL}" | grep -qF -- "${line}" \
+            \#*) grep -qF -- "${line}" "${RECIPE}" \
                     || { echo "         drifted (comment): ${line}"; missing=$((missing + 1)); } ;;
-            *)  printf '%s\n' "${ACTIVE}" | grep -qF -- "${line}" \
+            *)  grep -qF -- "${line}" "${ACTIVE_FILE}" \
                     || { echo "         drifted: ${line}"; missing=$((missing + 1)); } ;;
         esac
     done <<< "${BLOCK}"

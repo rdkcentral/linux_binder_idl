@@ -215,9 +215,12 @@ PROVIDES:append = " liblog"
 
 inherit cmake systemd siteinfo
 
-# The wire protocol belongs to the kernel, so the recipe needs the configured
-# kernel in scope to read it.
-do_configure[depends] += "virtual/kernel:do_shared_workdir"
+# No kernel dependency: this recipe STATES protocol 8 rather than reading it, so
+# it never opens the kernel's .config and has no reason to wait for one. The
+# dependency belongs with the derivation - binder-protocol-from-kernel.inc adds
+# it, and only when it is actually deriving. Declaring it here would pull a
+# kernel into the build for nothing, and fail outright where no kernel provider
+# exists at all, such as an SDK build.
 
 # Protocol 8, on every platform. It is what every 64-bit kernel serves, what
 # every kernel from 4.18 serves, and what a 32-bit userspace runs perfectly well
