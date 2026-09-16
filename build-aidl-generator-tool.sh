@@ -97,18 +97,35 @@ echo "Clean build:     ${CLEAN_BUILD}"
 echo "=========================================="
 
 if [ "$CLEAN_BUILD" = true ]; then
-  echo "==> Cleaning all build artifacts and source directories..."
-  rm -rf "${BUILD_DIR}" 2>/dev/null || true
-  echo "    Cleaned: ${BUILD_DIR}"
-  rm -rf "${ROOT_DIR}/out" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/out"
-  rm -rf "${ROOT_DIR}/build-host" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/build-host"
-  rm -rf "${ROOT_DIR}/build-target" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/build-target"
-  rm -rf "${ROOT_DIR}/android" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/android"
-  echo "✅ Complete clean finished"
+  echo "==> Cleaning build artifacts..."
+  # Clean what this invocation would WRITE, which is BUILD_DIR and OUT_DIR
+  # whether or not HOST_BUILD_DIR / HOST_OUT_DIR redirected them. Cleaning
+  # ${ROOT_DIR}/out unconditionally did both halves of this wrong: it left the
+  # overridden directory stale, so the isolated workspace a caller asked for was
+  # never cleaned, and it deleted the repository's own out/ — including the
+  # TARGET build's output — which the caller had deliberately steered away from.
+  _cleaned=""
+  clean_dir() {
+    case " ${_cleaned} " in *" $1 "*) return ;; esac
+    _cleaned="${_cleaned} $1"
+    rm -rf "$1" 2>/dev/null || true
+    echo "    Cleaned: $1"
+  }
+
+  clean_dir "${BUILD_DIR}"
+  clean_dir "${OUT_DIR}"
+
+  # The repository's own trees, only when nothing redirected this run away from
+  # them. An isolated workspace must not take the shared ones with it.
+  if [ -z "${HOST_BUILD_DIR:-}" ] && [ -z "${HOST_OUT_DIR:-}" ]; then
+    clean_dir "${ROOT_DIR}/out"
+    clean_dir "${ROOT_DIR}/build-host"
+    clean_dir "${ROOT_DIR}/build-target"
+    clean_dir "${ROOT_DIR}/android"
+  else
+    echo "    Kept: ${ROOT_DIR}/{out,build-host,build-target,android} — HOST_BUILD_DIR/HOST_OUT_DIR redirected this run"
+  fi
+  echo "✅ Clean finished"
   exit 0
 fi
 
