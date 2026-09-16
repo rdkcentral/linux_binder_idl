@@ -878,6 +878,13 @@ Description=Android Binder Service Manager
 Documentation=https://source.android.com/docs/core/architecture/hidl/binder-ipc
 After=local-fs.target
 Before=basic.target
+# The binder device must exist before servicemanager runs: it opens /dev/binder
+# and claims the context as its first act, and exits if there is no node. This
+# is a prerequisite, so Requires= rather than a ConditionPathExists=, which
+# would make systemd skip the unit and never retry it. On a binderfs platform
+# name the mount unit (dev-binderfs.mount) instead.
+Requires=dev-binder.device
+After=dev-binder.device
 
 [Service]
 Type=simple

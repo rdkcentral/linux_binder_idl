@@ -1,11 +1,35 @@
 # servicemanager owns the binder context. Every binder process resolves names
 # through it, so nothing that uses binder can start before it has registered as
 # the context manager.
+#
+# THE BINDER DEVICE MUST EXIST BEFORE THIS UNIT RUNS. servicemanager opens
+# /dev/binder and claims the context with BINDER_SET_CONTEXT_MGR as its first
+# act; with no node there is nothing to claim and it exits. The device is a
+# prerequisite to depend on, not a condition to test for.
+#
+# Requires= is what makes it a prerequisite: systemd holds this unit until
+# dev-binder.device is active and does not start it at all if that never
+# happens. After= on its own would only order the two when something else had
+# already pulled the device into the transaction.
+#
+# A platform that provisions /dev/binder through binderfs (kernel 5.0 and
+# newer, where /dev/binder is a symlink into the mount) names the mount unit
+# instead:
+#
+#     Requires=dev-binderfs.mount
+#     After=dev-binderfs.mount
+#
+# There is deliberately no ConditionPathExists=/dev/binder. A failed condition
+# makes systemd SKIP a unit, and a skipped unit has not failed - so Restart=
+# never applies and nothing retries it. A node that appeared a moment later
+# would leave the device with no context manager for the rest of that boot,
+# silently, which is the failure this unit exists to prevent.
 
 [Unit]
 Description=Android Binder service manager
-After=binder.mount
-ConditionPathExists=/dev/binder
+Documentation=https://source.android.com/docs/core/architecture/hidl/binder-ipc
+Requires=dev-binder.device
+After=dev-binder.device
 
 [Service]
 Type=simple
