@@ -97,35 +97,38 @@ echo "Clean build:     ${CLEAN_BUILD}"
 echo "=========================================="
 
 if [ "$CLEAN_BUILD" = true ]; then
-  echo "==> Cleaning build artifacts..."
-  # Clean what this invocation would WRITE, which is BUILD_DIR and OUT_DIR
-  # whether or not HOST_BUILD_DIR / HOST_OUT_DIR redirected them. Cleaning
-  # ${ROOT_DIR}/out unconditionally did both halves of this wrong: it left the
-  # overridden directory stale, so the isolated workspace a caller asked for was
-  # never cleaned, and it deleted the repository's own out/ — including the
-  # TARGET build's output — which the caller had deliberately steered away from.
+  echo "==> Cleaning all build artifacts and source directories..."
+  # `clean` exists so a user can get back to a COMPLETELY clean environment, so
+  # it takes the repository trees unconditionally - including android/, the
+  # cloned AOSP sources. Nothing here is conditional on how the build was
+  # directed: a clean that left something behind because of an environment
+  # variable would not be the thing this command is for.
+  #
+  # BUILD_DIR and OUT_DIR are cleaned as well as, not instead of, those trees.
+  # They are the same paths by default; when HOST_BUILD_DIR / HOST_OUT_DIR have
+  # redirected them they are extra ones, and leaving a redirected directory
+  # behind would be exactly the leftover state this command promises to remove.
   _cleaned=""
   clean_dir() {
-    case " ${_cleaned} " in *" $1 "*) return ;; esac
+    [ -n "$1" ] || return
+    case " ${_cleaned} " in *" $1 "*) return ;; esac   # same path twice
     _cleaned="${_cleaned} $1"
-    rm -rf "$1" 2>/dev/null || true
-    echo "    Cleaned: $1"
+    # Report only what was actually there. The default OUT_DIR sits inside out/,
+    # so it is already gone by the time this reaches it, and announcing a second
+    # removal of a path that no longer exists reads like the clean ran twice.
+    if [ -e "$1" ]; then
+      rm -rf "$1" 2>/dev/null || true
+      echo "    Cleaned: $1"
+    fi
   }
 
+  clean_dir "${ROOT_DIR}/out"
+  clean_dir "${ROOT_DIR}/build-host"
+  clean_dir "${ROOT_DIR}/build-target"
+  clean_dir "${ROOT_DIR}/android"
   clean_dir "${BUILD_DIR}"
   clean_dir "${OUT_DIR}"
-
-  # The repository's own trees, only when nothing redirected this run away from
-  # them. An isolated workspace must not take the shared ones with it.
-  if [ -z "${HOST_BUILD_DIR:-}" ] && [ -z "${HOST_OUT_DIR:-}" ]; then
-    clean_dir "${ROOT_DIR}/out"
-    clean_dir "${ROOT_DIR}/build-host"
-    clean_dir "${ROOT_DIR}/build-target"
-    clean_dir "${ROOT_DIR}/android"
-  else
-    echo "    Kept: ${ROOT_DIR}/{out,build-host,build-target,android} — HOST_BUILD_DIR/HOST_OUT_DIR redirected this run"
-  fi
-  echo "✅ Clean finished"
+  echo "✅ Complete clean finished"
   exit 0
 fi
 
