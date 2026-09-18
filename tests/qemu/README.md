@@ -49,18 +49,39 @@ them. It **skips cleanly** (not a failure) when QEMU, busybox, a compiler, a
 ## Matrix
 
 `build-kernels.sh` default versions span the supported range (4.9 floor → 5.16),
-one stable point release per minor, plus the legacy protocol-7 variant.
+one stable point release per minor, plus both 32-bit kernels at the 4.9 floor.
+
+There are three kinds of kernel, and the default `VERSIONS` list builds eight
+images across them:
 
 | Variant | Guest | Kernel fragment | Userspace |
 | --- | --- | --- | --- |
-| protocol 8 (default, mixed 32/64) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_IPC_32BIT=OFF` |
-| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 | `+ kconfig/binder-ipc32.fragment` (append `:ipc32` to a version) | `-DBINDER_IPC_32BIT=ON`, compiled `-m32` |
+| protocol 8, 64-bit (default) | x86_64 | `kconfig/binder.fragment` | `-DBINDER_PROTOCOL=8` |
+| protocol 8, 32-bit kernel | i386 (append `:i386`) | `kconfig/binder.fragment`, plus `binder-ipc32-off.fragment` and the prompt patch at 4.17 or older | `-DBINDER_PROTOCOL=8`, compiled `-m32` |
+| protocol 7 (legacy all-32-bit) | i386, kernel ≤ 4.17 (append `:ipc32`) | `+ kconfig/binder-ipc32.fragment` | `-DBINDER_PROTOCOL=7`, compiled `-m32` |
+
+The default list is `4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.4.290:i386
+5.10.205 5.15.148 5.16.20` — the supported range at one stable point release per
+minor, with 4.9 carried at **both** protocols and 5.4 carried as a 32-bit kernel
+as well.
+
+The middle row is the one most platforms run: a 32-bit userspace on a modern
+binder driver. At 4.18 and newer the symbol is gone and the plain fragment is
+enough. At 4.17 or older it takes a **kernel patch**, because 4.9 declares
+`CONFIG_ANDROID_BINDER_IPC_32BIT` as a bare `bool` with no prompt string, so
+kconfig discards a `# ... is not set` line from a fragment and recomputes
+`default y`. `patches/linux-4.9-binder-ipc32-prompt.patch` adds the prompt that
+makes clearing it possible, and `build-kernels.sh` applies it automatically for
+`:i386` on those versions — which is why `4.9.337:i386` is in the default list.
+That pairing is what makes the same kernel version appear at both protocols,
+which is exactly what is seen in production on identical silicon.
 
 Protocol 7 is only reachable on a **32-bit kernel at 4.17 or older**: upstream
 declares `CONFIG_ANDROID_BINDER_IPC_32BIT` as `depends on !64BIT` and removed it
 in 4.18. `build-kernels.sh` therefore builds `:ipc32` variants as an i386 guest,
 rejects `:ipc32` on 4.18+, and verifies the option survived the config merge
-before accepting the kernel. Each kernel directory carries a `variant` file
+before accepting the kernel — and equally refuses a protocol-8 variant whose
+config came out with the option set. Each kernel directory carries a `variant` file
 (`arch=`, `protocol=`) that the runner uses to pick the QEMU binary and the
 matching userspace.
 
