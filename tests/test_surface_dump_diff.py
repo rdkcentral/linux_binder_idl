@@ -58,6 +58,15 @@ parcelable Config {
 }
 """
 
+BASE_UNION = """
+package com.rdk.test;
+@VintfStability
+union Value {
+    int intValue;
+    String stringValue;
+}
+"""
+
 BASE_ENUM = """
 package com.rdk.test;
 @Backing(type="int") @VintfStability
@@ -163,6 +172,27 @@ class TestDiffRuleTable(unittest.TestCase):
     def test_field_appended_major(self):
         new = BASE_PARCEL.replace("}", "    int height;\n}")
         self.assertClass("major", [BASE_PARCEL], [new], "field_added")
+
+    def test_union_arm_appended_breaking(self):
+        """A union has no size header: an old reader handed an unknown tag
+        cannot skip the value, so the transaction fails (#60). Appending an
+        arm is a wire break, unlike appending a parcelable field."""
+        new = BASE_UNION.replace("String stringValue;",
+                                 "String stringValue;\n    boolean boolValue;")
+        self.assertClass("breaking", [BASE_UNION], [new], "union_arm_added")
+
+    def test_union_arm_removed_breaking(self):
+        new = BASE_UNION.replace("    String stringValue;\n", "")
+        self.assertClass("breaking", [BASE_UNION], [new], "field_removed")
+
+    def test_union_arm_reordered_breaking(self):
+        new = BASE_UNION.replace(
+            "    int intValue;\n    String stringValue;",
+            "    String stringValue;\n    int intValue;")
+        self.assertClass("breaking", [BASE_UNION], [new])
+
+    def test_union_unchanged_none(self):
+        self.assertClass("none", [BASE_UNION], [BASE_UNION])
 
     def test_enum_value_removed_breaking(self):
         new = BASE_ENUM.replace("AUTO,", "")

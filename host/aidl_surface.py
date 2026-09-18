@@ -31,9 +31,9 @@ aidl_surface - canonical AIDL surface dump + structural diff (#27).
         Structurally compare two dump-surface outputs and classify:
           breaking - a client built against <old> can break against <new>
                      (member removed / changed / reordered, enum int
-                     changed, annotation changed, ...)
-          major    - purely additive (member appended, enum value added,
-                     new type)
+                     changed, annotation changed, union arm appended, ...)
+          major    - purely additive (parcelable field or interface method
+                     appended, enum value added, new type)
           none     - no structural difference
         Doc-only changes never appear here (comments are stripped at dump
         time): equal dumps + differing sources is the consumer's doc-only
@@ -315,7 +315,8 @@ def _member_name(kind, member):
 
 def _diff_sequence(kind, where, old, new, added_kind, changes):
     """Order-aware member diff. Removal/change/reorder = breaking;
-    append-only = major (declaration order is ABI)."""
+    append-only = major (declaration order is ABI), except for a union,
+    where an appended arm is itself breaking - see the note below."""
     old_names = [_member_name(kind, m) for m in old]
     new_names = [_member_name(kind, m) for m in new]
     new_by_name = dict(zip(new_names, new))
@@ -346,10 +347,23 @@ def _diff_sequence(kind, where, old, new, added_kind, changes):
         return
     for name in new_names[len(survivors):]:
         if name not in old_by_name:
-            changes.append({
-                'class': 'major', 'kind': added_kind,
-                'where': where, 'symbol': new_by_name[name],
-            })
+            if kind == 'union':
+                # A union has no size header. It is written as an int32 tag
+                # followed by exactly one value, and the generated reader is a
+                # switch on that tag whose fallthrough is BAD_VALUE. A receiver
+                # handed an unknown tag cannot skip the value, because it cannot
+                # know its length, so the transaction fails. Appending an arm is
+                # therefore a wire break — unlike appending a parcelable field,
+                # which an old reader skips using the 4-byte size header.
+                changes.append({
+                    'class': 'breaking', 'kind': 'union_arm_added',
+                    'where': where, 'symbol': new_by_name[name],
+                })
+            else:
+                changes.append({
+                    'class': 'major', 'kind': added_kind,
+                    'where': where, 'symbol': new_by_name[name],
+                })
 
 
 def _diff_enum(where, old, new, changes, prefix='enum_value'):
