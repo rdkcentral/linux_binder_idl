@@ -187,6 +187,11 @@ if (NOT DEFINED CMAKE_INSTALL_INCDIR)
     message("cmake install header dir ${CMAKE_INSTALL_INCDIR}")
 endif ()
 
+# Record the prefix in every installed artifact — see cmake/InstallRunpath.cmake.
+# Must precede the first add_library()/add_executable().
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/InstallRunpath.cmake)
+binder_install_runpath()
+
 
 ###########################################################
 # Checkout Required repos from AOSP

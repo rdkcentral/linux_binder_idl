@@ -280,10 +280,89 @@ BINDER_IPC_32BIT=ON (protocol 7) with a 64-bit toolchain (CMAKE_SIZEOF_VOID_P=8)
 | Variable | Description | Default | Notes |
 |----------|-------------|---------|-------|
 | `CMAKE_INSTALL_PREFIX` | Installation root directory | `/usr/local` | Yocto uses `${prefix}` or `${D}${prefix}` |
+| `BINDER_INSTALL_RUNPATH` | Record the prefix in each artifact as `DT_RUNPATH` | `ON` | Skipped automatically for a prefix already on the loader's default search path |
 
 **Important:** CMake **does not** use separate `TARGET_DIRECTORIES` or similar output path variables. The build system automatically places output in:
 - Build artifacts: `${CMAKE_BINARY_DIR}` (e.g., `build-target/`)
 - Installed files: `${CMAKE_INSTALL_PREFIX}` (e.g., `/usr/local` or Yocto staging)
+
+#### Installing the middleware and the vendor layer side by side
+
+Where the two layers each build this library, they are separated by install
+prefix. Set `CMAKE_INSTALL_PREFIX` per layer and the library, its headers and
+`servicemanager` all follow it:
+
+```bash
+# middleware
+cmake -S . -B build-mw     -DCMAKE_INSTALL_PREFIX=/mw/usr      # -> /mw/usr/lib, /mw/usr/include, /mw/usr/bin
+# vendor
+cmake -S . -B build-vendor -DCMAKE_INSTALL_PREFIX=/vendor/usr  # -> /vendor/usr/lib, ...
+```
+
+Each installed artifact records its own prefix as `DT_RUNPATH`, so a middleware
+binary resolves `libbinder.so` from `/mw/usr/lib` and a vendor binary from
+`/vendor/usr/lib`:
+
+```console
+$ readelf -d /mw/usr/lib/libbinder.so | grep RUNPATH
+ 0x000000000000001d (RUNPATH)   Library runpath: [/mw/usr/lib]
+```
+
+The `RUNPATH` is on every library, not only the executables, because
+`DT_RUNPATH` is not inherited transitively — a service carrying
+`RUNPATH=/mw/usr/lib` links `libbinder.so`, but that entry does not help
+`libbinder.so` find `liblog`, `libbase`, `libcutils` and `libutils` in the same
+prefix. Each needs its own, and that is what makes the prefix hold through a
+dependency chain.
+
+The loader searches `DT_RPATH` (only when `DT_RUNPATH` is absent), then
+`LD_LIBRARY_PATH`, then `DT_RUNPATH`, then the cache and the default
+directories. So the two tags differ in opposite directions: `DT_RPATH` is
+inherited by dependency lookups *and* outranks `LD_LIBRARY_PATH`, while
+`DT_RUNPATH` is neither. New dtags are chosen anyway — `DT_RPATH` is deprecated
+and OpenEmbedded's tooling normalises to `DT_RUNPATH`, and its transitivity buys
+nothing once every artifact carries its own entry. The cost it does carry is the
+third rule below.
+
+Four rules go with the layout:
+
+- **Neither prefix belongs in `/etc/ld.so.conf.d/`.** Resolution comes from
+  `RUNPATH` only. A prefix on the global path re-introduces the ambiguity this
+  closes, and both layers then load whichever copy that path reaches first.
+- **`LD_LIBRARY_PATH` must not point one layer at the other's prefix.** It is
+  searched before `DT_RUNPATH`, so it wins — this is the one way to defeat the
+  separation from outside the build, and it applies to service unit files and
+  wrapper scripts as much as to an interactive shell.
+- **`servicemanager` is installed under each prefix, but only one can run per
+  binder device.** Either one is disabled, or the two run on separate device
+  nodes — `ProcessState::initWithDriver()` selects the node, and note it falls
+  back to `/dev/binder` when the requested one is missing.
+- **The protocol is still kernel-wide.** One kernel serves one protocol, so both
+  installs build at the same `BINDER_IPC_32BIT`, and two installs that talk to
+  each other must also agree on the Parcel encoding and the AIDL contract. See
+  [PROTOCOL.md](PROTOCOL.md).
+
+A prefix already on the loader's default search path (`/usr`, `/usr/local`,
+`/lib`, and the `lib32`/`lib64` variants) gets no `RUNPATH` — it needs none, and
+emitting one there is what Yocto's `useless-rpaths` QA check rejects. Set
+`-DBINDER_INSTALL_RUNPATH=OFF` to suppress it in any case.
+
+In Yocto, set `prefix`/`libdir`/`includedir`/`bindir` in the recipe rather than
+overriding `CMAKE_INSTALL_PREFIX` through `EXTRA_OECMAKE`, since `cmake.bbclass`
+pins it to `${prefix}`, and extend `FILES:${PN}` to cover the prefix.
+
+`cmake.bbclass` passes `CMAKE_INSTALL_LIBDIR` **relative** to the prefix, which
+is also what `GNUInstallDirs` produces. It is resolved against the prefix before
+being compared or recorded, so a relative value never reaches `DT_RUNPATH` —
+recorded verbatim it would be resolved by the loader against the process's
+working directory rather than the prefix.
+
+A separated prefix will trip Yocto's `useless-rpaths` QA check: the recorded
+`RUNPATH` equals the recipe's own `libdir`, and the check has no way to know the
+mount is off the loader's default search path. Add
+`INSANE_SKIP:${PN} += "useless-rpaths"` to a recipe installing to a separated
+prefix. A recipe installing to a stock prefix gets no `RUNPATH` and needs no
+skip.
 
 #### Complete CMake Invocation Examples (Yocto/Production)
 
