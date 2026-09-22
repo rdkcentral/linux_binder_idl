@@ -79,6 +79,21 @@ else()
     message(STATUS "HOST_AIDL_DIR explicitly set to ${HOST_AIDL_DIR}")
 endif()
 
+# The generated interface libraries install to the same prefix as the binder
+# runtime they link, so they need the same defaults. When this file is included
+# by CMakeLists.txt/.inc these are already set and both blocks are no-ops; when
+# a consumer uses it standalone they are what makes the install destination
+# below resolve to a real directory.
+if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
+    set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib)
+    message(STATUS "CMAKE_INSTALL_LIBDIR not set, defaulting to ${CMAKE_INSTALL_LIBDIR}")
+endif ()
+
+# Record the prefix in every installed artifact — see cmake/InstallRunpath.cmake.
+# Must precede the first add_library()/add_executable().
+include(${LINUX_BINDER_AIDL_ROOT}/cmake/InstallRunpath.cmake)
+binder_install_runpath()
+
 #######################################################################
 # Internal paths used by this helper
 #######################################################################
