@@ -99,6 +99,12 @@ struct binder_version { __s32 protocol_version; };
 #define BINDER_VERSION _IOWR('b', 9, struct binder_version)
 #endif
 EOF
+# ...and the version.h that ships beside it, so binder_module.h knows the
+# header set predates 5.13.
+cat > "${WORK}/uapi49/linux/version.h" <<'EOF'
+#define LINUX_VERSION_CODE 264448
+#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + ((c) > 255 ? 255 : (c)))
+EOF
 
 # TU exercising the freeze symbols the patched header is responsible for.
 cat > "${WORK}/probe.c" <<'EOF'
@@ -120,4 +126,20 @@ else
     echo "    ---- compiler error (fallbacks missing → #35 regression) ----"
     grep -E 'error:|binder_freeze_info|binder_frozen_status_info|BINDER_FREEZE' "${WORK}/cc.err" | head -8 | sed 's/^/    /'
     fail "#35: build fails against 4.9 headers — pre-5.16 fallbacks are disabled in binder_module.h"
+fi
+
+# The other side: an upstream header from 5.13 on declares the freeze and
+# oneway-spam definitions as enums and structs, which #ifndef cannot see. The
+# fallbacks must stay out of the way, or the structs are defined twice. The
+# build host's own kernel headers are that header wherever they are 5.13+.
+HOST_VER="$(printf '#include <linux/version.h>\nLINUX_VERSION_CODE\n' | "${CXX}" -x c++ -E -P - 2>/dev/null | tail -1)"
+if [ -n "${HOST_VER}" ] && [ "${HOST_VER}" -ge 331008 ] 2>/dev/null; then
+    if "${CXX}" -x c++ -c -I"${WORK}" "${WORK}/probe.c" -o "${WORK}/probe-host.o" 2>"${WORK}/cc-host.err"; then
+        pass "binder_module.h compiles against the host's upstream (5.13+) UAPI header"
+    else
+        grep -E 'error:' "${WORK}/cc-host.err" | head -4 | sed 's/^/    /'
+        fail "binder_module.h redefines what an upstream 5.13+ UAPI header already declares"
+    fi
+else
+    echo "  SKIP  host kernel headers predate 5.13; the upstream-header check needs 5.13+"
 fi

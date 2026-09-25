@@ -58,10 +58,10 @@ S = "${WORKDIR}/git"
 #      through PREMIRRORS.
 # The sha256 is the same wherever the tarball is hosted. For another SRCREV,
 # ./aosp-source.sh name and ./aosp-source.sh sha256 print both values.
-AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-dcdb17ee.tar.gz"
+AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-fede4b0b.tar.gz"
 AOSP_SOURCE_URI ?= "https://artifacts.example.invalid/linux-binder/${AOSP_SOURCE_NAME}"
 SRC_URI += "${AOSP_SOURCE_URI};name=aosp;subdir=git;downloadfilename=${AOSP_SOURCE_NAME}"
-SRC_URI[aosp.sha256sum] = "620ee97c05ad7987a2fe4e82ede67ea7be498e41250d3937534e51853a05bf41"
+SRC_URI[aosp.sha256sum] = "95fa27976cd03d321c8334af45a03d39b0ade4c74ba054b70cd7ccde7aa1622c"
 
 # libbinder provides liblog; do not also build liblog.bb.
 RPROVIDES:${PN}:append = " liblog"

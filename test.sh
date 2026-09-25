@@ -380,7 +380,7 @@ test_1_1() {
         fi
 
         # Verify key repositories were cloned
-        REQUIRED_REPOS=("native" "aidl" "fmtlib" "logging" "libbase" "core" "googletest" "build-tools")
+        REQUIRED_REPOS=("native" "aidl" "fmtlib" "logging" "libbase" "core" "googletest")
         for repo in "${REQUIRED_REPOS[@]}"; do
             if [ -d "./android/${repo}" ]; then
                 print_pass "Repository unpacked: ${repo}"

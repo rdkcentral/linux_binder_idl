@@ -70,33 +70,8 @@ set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
 set(ANDROID_FMTLIB_DIR ${ANDROID_DIR}/fmtlib)
 set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
 
-###########################################################
-# Stage android kernel headers (linux/, asm/, asm-generic/)
-# so <linux/android/binder.h> resolves to the project's copy
-# instead of the host system's /usr/include version.
-# Only kernel UAPI headers are staged — NOT musl C library
-# headers — to avoid conflicts with the host's glibc.
-###########################################################
-set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
-if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
-    set(_SYSROOT_ARCH "x86_64-linux-musl")
-else()
-    set(_SYSROOT_ARCH "i686-linux-musl")
-endif()
-set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
-
-if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
-    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
-         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
-endif()
-
-# Prioritize project kernel headers over system /usr/include/linux/
-include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
+# Kernel UAPI headers (<linux/android/binder.h>) come from the toolchain's
+# sysroot: linux-libc-headers in Yocto, the distro's kernel headers on a host.
 
 ###########################################################
 find_package(PkgConfig)
