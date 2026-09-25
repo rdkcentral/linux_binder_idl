@@ -53,6 +53,7 @@ the switches have to be chosen from the target kernel's configuration.
 - Linux Kernel 5.16.x with binder enabled (Tested with 5.16.20)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (minimum GCC 9.4.0)
+- flex, bison 3.0 or later, and m4 (for the host AIDL compiler)
 
 **For detailed kernel configuration, runtime setup, and Yocto/BitBake integration, see [BUILD.md](BUILD.md).**
 **For the kernel-to-switch selection matrix, see [PROTOCOL.md](PROTOCOL.md).**

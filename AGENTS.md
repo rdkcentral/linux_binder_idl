@@ -27,6 +27,8 @@ guide.
 
 - `android/` is unpacked from the AOSP source tarball by `./aosp-source.sh` and
   patched with `patches/*.patch`. Never edit it, and never clone AOSP into it.
+- The tarball is source only: never add a prebuilt binary to `aosp/manifest`
+  (`generate` refuses one). flex, bison and m4 come from the build host.
 - `aosp/manifest` defines the tarball; `aosp/aosp-source.sha256` identifies it.
   Change them only together, with `./aosp-source.sh generate --update`.
 - The SDK publishes no tarball. Each team generates it, uploads it to its own

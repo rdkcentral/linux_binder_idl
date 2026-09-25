@@ -67,6 +67,7 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 
 ### Source Code Management
 
+- **Source only:** the AOSP source tarball carries no prebuilt binary, and `aosp-source.sh generate` refuses one. Never add a prebuilt to `aosp/manifest`; build-host tools (flex, bison, m4) come from the build host - distro packages or Yocto `-native` recipes
 - **AOSP sources:** one source tarball, defined by `aosp/manifest` (repositories, exact commits, paths; tag `android-13.0.0_r74`) and identified by `aosp/aosp-source.sha256`. `./aosp-source.sh generate` builds it byte-identically from the manifest
 - **The tarball location is each team's own:** the SDK publishes no tarball, and `AOSP_SOURCE_URI` in `example/yocto/linux-binder.bb` is a placeholder on a `.invalid` host. A team runs `generate`, uploads the file to its artifact store (e.g. Artifactory), and sets `AOSP_SOURCE_URI`. Keep the placeholder a placeholder; never put a real URL, or the tarball itself, in the repository
 - **Patches applied at build time:** the tarball is unpatched upstream; `patches/*.patch` (aidl, core, libbase, logging, native) is applied by `aosp-source.sh` - `provision`/`unpack` for standalone builds, `apply-patches` from the recipe's `do_patch`

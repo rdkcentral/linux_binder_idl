@@ -28,7 +28,8 @@
 #   3. A tarball whose sha256 does not match is refused.
 #   4. Unpacking applies patches/ on top of unpatched upstream, once.
 #   5. Changing a patch needs no new tarball: provision re-unpacks and re-applies.
-#   6. The repository's own manifest and sha256 file agree.
+#   6. The tarball is source only: a prebuilt binary is refused.
+#   7. The repository's own manifest and sha256 file agree.
 #
 # Run: ./tests/test_aosp_source.sh
 
@@ -169,7 +170,20 @@ else
     fail "provision did not apply the changed patch: $(tail -1 "${WORK}/out.log")"
 fi
 
-# 6. The repository's own pin is consistent.
+# 6. A prebuilt binary is refused: the tarball is source only.
+bin_files() { mkdir -p "${WORK}/up/gamma/bin"
+              printf '\177ELF\002\001\001' > "${WORK}/up/gamma/bin/tool"; }
+GAMMA="$(make_repo "${WORK}/up/gamma" bin_files)"
+printf 'tag fixture_bin\ngamma file://%s %s\n' "${WORK}/up/gamma" "${GAMMA}" > "${WORK}/manifest-bin"
+if AOSP_MANIFEST="${WORK}/manifest-bin" AOSP_SHA_FILE="${WORK}/sha256-bin" run generate --update; then
+    fail "generate wrote a tarball containing a prebuilt binary"
+elif grep -q 'gamma/bin/tool' "${WORK}/out.log"; then
+    pass "generate refuses a prebuilt binary, and names it"
+else
+    fail "generate failed without naming the binary: $(tail -1 "${WORK}/out.log")"
+fi
+
+# 7. The repository's own pin is consistent.
 unset AOSP_MANIFEST AOSP_SHA_FILE AOSP_PATCH_DIR
 if "${SCRIPT}" sha256 >/dev/null 2>"${WORK}/err.log"; then
     pass "aosp/aosp-source.sha256 names the tarball aosp/manifest describes"

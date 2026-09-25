@@ -29,8 +29,10 @@
 # own artifact store (e.g. Artifactory), and points builds at it with
 # AOSP_SOURCE_URI. The sha256 is the tarball's identity wherever it is hosted.
 #
-# The tarball holds unpatched upstream source. patches/<dir>.patch is applied
-# on top at build time, so changing a patch never needs a new tarball.
+# The tarball holds unpatched upstream SOURCE and no prebuilt binary - generate
+# refuses one. Build-host tools (flex, bison, m4) come from the build host: a
+# distro package or a Yocto -native recipe. patches/<dir>.patch is applied on
+# top at build time, so changing a patch never needs a new tarball.
 #
 # Run ./aosp-source.sh help for the commands.
 
@@ -188,6 +190,20 @@ cmd_generate() {
             | tar -x -C "${work}/android/${dir}"
         rm -rf "${work}/repo-${dir}"
     done < <(manifest_lines)
+
+    # Source only. A prebuilt binary is tied to one host architecture and is
+    # not something a release can be built from, so the tarball never carries
+    # one: build-host tools (flex, bison, m4) come from the build host.
+    local binaries
+    binaries="$(find "${work}/android" -type f -exec sh -c '
+        for f; do
+            case "$(head -c4 "$f" | od -An -tx1 | tr -d " \n")" in
+                7f454c46|cffaedfe|cefaedfe|feedface|feedfacf|cafebabe) echo "  ${f#*/android/}" ;;
+            esac
+        done' sh {} +)"
+    [ -z "${binaries}" ] \
+        || die "aosp/manifest takes prebuilt binaries; the tarball is source only:
+${binaries}"
 
     out="${AOSP_SOURCE_CACHE}/${name}"
     tar --sort=name --format=gnu --mtime="${TAR_MTIME}" \

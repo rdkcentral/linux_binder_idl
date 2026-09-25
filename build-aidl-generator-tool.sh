@@ -160,10 +160,8 @@ else
   echo "Using m4:        ${M4}"
 fi
 
-# NOTE on bison: CMakeLists.txt hard-sets BISON_EXECUTABLE to the
-# vendored android/build-tools bison via a plain set() (no CACHE),
-# which would override any -DBISON_EXECUTABLE passed here. The M4
-# export above is sufficient: the vendored bison reads M4 at runtime.
+# flex and bison are the build host's own (find_package in CMakeLists.txt);
+# bison reads M4 at runtime, which is why the export above matters.
 
 # Force native host build: override any cross-compilation settings.
 # In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)

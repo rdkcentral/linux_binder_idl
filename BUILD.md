@@ -28,6 +28,8 @@ out/
 - Ubuntu 22.04 LTS (or similar)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (GCC 9.4.0 minimum)
+- For the host AIDL compiler: flex, bison 3.0 or later, and m4, from the build host (distro
+  packages; in Yocto, `flex-native` and `bison-native`). No prebuilt tool is used
 - For cross-compilation: ARM toolchain (e.g., `arm-linux-gnueabihf-gcc`)
 
 ## AOSP sources
@@ -47,6 +49,11 @@ AOSP repository, the exact commit, and the paths taken. The same manifest always
 produces a byte-identical tarball, and `aosp/aosp-source.sha256` records its
 sha256. The tarball holds unpatched upstream source; `patches/*.patch` is applied
 on top at build time, by `./aosp-source.sh` in both Yocto and standalone builds.
+
+**The tarball is source only.** It carries no prebuilt binary - `generate` refuses
+one - so a release is always built from source, on any build-host architecture.
+From `prebuilts/build-tools` it takes only the kernel UAPI headers. flex, bison
+and m4 come from the build host (see [Prerequisites](#prerequisites)).
 
 **The SDK publishes no tarball, and the location in the reference recipe is a
 placeholder.** Each team hosts its own copy:
@@ -276,10 +283,10 @@ S = "${WORKDIR}/git"
 #      through PREMIRRORS.
 # The sha256 is the same wherever the tarball is hosted. For another SRCREV,
 # ./aosp-source.sh name and ./aosp-source.sh sha256 print both values.
-AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-5cdb5cab.tar.gz"
+AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-dcdb17ee.tar.gz"
 AOSP_SOURCE_URI ?= "https://artifacts.example.invalid/linux-binder/${AOSP_SOURCE_NAME}"
 SRC_URI += "${AOSP_SOURCE_URI};name=aosp;subdir=git;downloadfilename=${AOSP_SOURCE_NAME}"
-SRC_URI[aosp.sha256sum] = "40949243453e9cf3b66fbaa300ff2de5d63d9feac874230bb1f9245959f2b88c"
+SRC_URI[aosp.sha256sum] = "620ee97c05ad7987a2fe4e82ede67ea7be498e41250d3937534e51853a05bf41"
 
 # libbinder provides liblog; do not also build liblog.bb.
 RPROVIDES:${PN}:append = " liblog"
