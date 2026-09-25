@@ -46,6 +46,23 @@ PV ?= "2.7.0"
 SRCREV ?= "2.7.0"
 S = "${WORKDIR}/git"
 
+# AOSP sources: one tarball, defined by aosp/manifest in the SDK source and
+# identified by the sha256 below.
+#
+# AOSP_SOURCE_URI IS A PLACEHOLDER. The SDK publishes no tarball, and
+# artifacts.example.invalid does not exist. Before this recipe can fetch:
+#   1. run ./aosp-source.sh generate in a checkout of the SRCREV above;
+#   2. upload downloads/${AOSP_SOURCE_NAME} to your team's artifact store
+#      (e.g. Artifactory);
+#   3. set AOSP_SOURCE_URI to its URL in your layer, or map the placeholder
+#      through PREMIRRORS.
+# The sha256 is the same wherever the tarball is hosted. For another SRCREV,
+# ./aosp-source.sh name and ./aosp-source.sh sha256 print both values.
+AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-fede4b0b.tar.gz"
+AOSP_SOURCE_URI ?= "https://artifacts.example.invalid/linux-binder/${AOSP_SOURCE_NAME}"
+SRC_URI += "${AOSP_SOURCE_URI};name=aosp;subdir=git;downloadfilename=${AOSP_SOURCE_NAME}"
+SRC_URI[aosp.sha256sum] = "95fa27976cd03d321c8334af45a03d39b0ade4c74ba054b70cd7ccde7aa1622c"
+
 # libbinder provides liblog; do not also build liblog.bb.
 RPROVIDES:${PN}:append = " liblog"
 PROVIDES:append = " liblog"
@@ -90,6 +107,13 @@ EXTRA_OECMAKE += " \
 # from ${D} rather than packaging an empty one.
 do_configure:prepend() {
     unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+}
+
+# The tarball holds unpatched upstream. The SDK's patches/ is applied on top by
+# the same script a standalone build uses, so both build the same source.
+do_patch[postfuncs] += "linux_binder_aosp_patches"
+linux_binder_aosp_patches() {
+    ${S}/aosp-source.sh apply-patches --android-dir ${S}/android
 }
 
 do_install:append() {

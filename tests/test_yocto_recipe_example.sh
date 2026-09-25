@@ -31,7 +31,9 @@
 #      defconfig, which can request a symbol the kernel no longer has and have
 #      that request dropped in silence.
 #   3. CMake's own install rules run, so the package is not empty.
-#   4. BUILD.md's recipe block has not drifted from it. The doc inlines the
+#   4. It fetches the AOSP source tarball this revision describes, from a
+#      location marked as a placeholder, and patches it in do_patch.
+#   5. BUILD.md's recipe block has not drifted from it. The doc inlines the
 #      recipe for readability, and two copies of one file is how they diverge.
 #
 # Run: ./tests/test_yocto_recipe_example.sh
@@ -151,7 +153,41 @@ else
     fail "do_install does not check that libbinder.so reached \${D}"
 fi
 
-# 5. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
+# 5. The AOSP sources come from the source tarball, fetched in do_fetch, and the
+#    recipe cannot drift from the tarball this revision describes. The location
+#    is a placeholder - each team hosts the tarball itself - and must stay
+#    unmistakably one: a reserved .invalid host, and a comment saying so.
+WANT_NAME="$("${ROOT}/aosp-source.sh" name 2>/dev/null)"
+WANT_SHA="$("${ROOT}/aosp-source.sh" sha256 2>/dev/null)"
+if printf '%s\n' "${ACTIVE}" | grep -qF "AOSP_SOURCE_NAME = \"${WANT_NAME}\""; then
+    pass "AOSP_SOURCE_NAME is ${WANT_NAME}, the tarball aosp/manifest describes"
+else
+    fail "AOSP_SOURCE_NAME is not ${WANT_NAME} - run ./aosp-source.sh name"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qF "SRC_URI[aosp.sha256sum] = \"${WANT_SHA}\""; then
+    pass "SRC_URI[aosp.sha256sum] matches aosp/aosp-source.sha256"
+else
+    fail "SRC_URI[aosp.sha256sum] is not ${WANT_SHA} - run ./aosp-source.sh sha256"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qE '^SRC_URI \+= "\$\{AOSP_SOURCE_URI\};name=aosp;'; then
+    pass "SRC_URI fetches the tarball from AOSP_SOURCE_URI"
+else
+    fail "SRC_URI does not fetch \${AOSP_SOURCE_URI} as name=aosp"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qE '^AOSP_SOURCE_URI \?= "https://[^/"]+\.invalid/' \
+   && grep -qF 'AOSP_SOURCE_URI IS A PLACEHOLDER' "${RECIPE}"; then
+    pass "AOSP_SOURCE_URI is a marked placeholder on a reserved .invalid host"
+else
+    fail "AOSP_SOURCE_URI must default to a .invalid host under an 'IS A PLACEHOLDER' comment"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qF 'do_patch[postfuncs] += "linux_binder_aosp_patches"' \
+   && printf '%s\n' "${ACTIVE}" | grep -qF 'aosp-source.sh apply-patches --android-dir ${S}/android'; then
+    pass "do_patch applies patches/ with aosp-source.sh"
+else
+    fail "the recipe does not apply patches/ from do_patch with aosp-source.sh"
+fi
+
+# 6. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
 #    must appear in the recipe; the recipe may carry more (its licence header,
 #    SRC_URI, systemd) than the doc chooses to show.
 #

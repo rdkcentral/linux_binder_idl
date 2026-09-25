@@ -513,3 +513,59 @@ index a579442..47fb4c8 100644
  #include <map>
  #include <optional>
  #include <thread>
+diff --git a/libs/binder/binder_module.h b/libs/binder/binder_module.h
+index 793795e..9abf373 100644
+--- a/libs/binder/binder_module.h
++++ b/libs/binder/binder_module.h
+@@ -30,15 +30,24 @@
+ #endif
+ 
+ #include <linux/android/binder.h>
++#include <linux/version.h>
+ #include <sys/ioctl.h>
+ 
+-#ifndef BR_FROZEN_REPLY
++// Upstream kernel UAPI headers declare the freeze and oneway-spam definitions
++// from 5.13, as enums and structs that #ifndef cannot see; Android's processed
++// headers declare them as #defines. The fallbacks below apply only when the
++// header has neither: an upstream header older than 5.13, such as 4.9.
++#if defined(LINUX_VERSION_CODE) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
++#define BINDER_MODULE_UAPI_HAS_FREEZE 1
++#endif
++
++#if !defined(BR_FROZEN_REPLY) && !defined(BINDER_MODULE_UAPI_HAS_FREEZE)
+ // Temporary definition of BR_FROZEN_REPLY. For production
+ // this will come from UAPI binder.h
+ #define BR_FROZEN_REPLY _IO('r', 18)
+ #endif // BR_FROZEN_REPLY
+ 
+-#ifndef BINDER_FREEZE
++#if !defined(BINDER_FREEZE) && !defined(BINDER_MODULE_UAPI_HAS_FREEZE)
+ /*
+  * Temporary definitions for freeze support. For the final version
+  * these will be defined in the UAPI binder.h file from upstream kernel.
+@@ -62,7 +71,7 @@ struct binder_freeze_info {
+ };
+ #endif // BINDER_FREEZE
+ 
+-#ifndef BINDER_GET_FROZEN_INFO
++#if !defined(BINDER_GET_FROZEN_INFO) && !defined(BINDER_MODULE_UAPI_HAS_FREEZE)
+ 
+ #define BINDER_GET_FROZEN_INFO _IOWR('b', 15, struct binder_frozen_status_info)
+ 
+@@ -86,13 +95,13 @@ struct binder_frozen_status_info {
+ };
+ #endif // BINDER_GET_FROZEN_INFO
+ 
+-#ifndef BR_ONEWAY_SPAM_SUSPECT
++#if !defined(BR_ONEWAY_SPAM_SUSPECT) && !defined(BINDER_MODULE_UAPI_HAS_FREEZE)
+ // Temporary definition of BR_ONEWAY_SPAM_SUSPECT. For production
+ // this will come from UAPI binder.h
+ #define BR_ONEWAY_SPAM_SUSPECT _IO('r', 19)
+ #endif // BR_ONEWAY_SPAM_SUSPECT
+ 
+-#ifndef BINDER_ENABLE_ONEWAY_SPAM_DETECTION
++#if !defined(BINDER_ENABLE_ONEWAY_SPAM_DETECTION) && !defined(BINDER_MODULE_UAPI_HAS_FREEZE)
+ /*
+  * Temporary definitions for oneway spam detection support. For the final version
+  * these will be defined in the UAPI binder.h file from upstream kernel.

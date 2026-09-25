@@ -143,7 +143,6 @@ set(ANDROID_CORE_DIR ${ANDROID_DIR}/core)
 set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
 set(ANDROID_FMTLIB_DIR ${ANDROID_DIR}/fmtlib)
 set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
-set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
 
 set(BINDER_DIR ${ANDROID_NATIVE_DIR}/libs/binder)
 set(LIBUTILS_DIR ${ANDROID_CORE_DIR}/libutils)
@@ -194,12 +193,15 @@ binder_install_runpath()
 
 
 ###########################################################
-# Checkout Required repos from AOSP
+# AOSP sources - unpacked from the AOSP source tarball
+#
+# CMake never fetches them: ./aosp-source.sh provision unpacks the tarball into
+# android/ and applies patches/. build-aidl-generator-tool.sh runs it.
 ###########################################################
-if (NOT EXISTS ${ANDROID_DIR})
-    execute_process(
-        COMMAND sh -c "${CMAKE_CURRENT_LIST_DIR}/clone-android-binder-repo.sh"
-    )
+if (NOT EXISTS ${ANDROID_DIR}/native)
+    message(FATAL_ERROR
+        "AOSP sources not found in ${ANDROID_DIR}. "
+        "Run ${CMAKE_CURRENT_LIST_DIR}/aosp-source.sh provision first.")
 endif()
 
 
@@ -215,7 +217,6 @@ macro(AidlGenerator aidlName baseDir sources)
             OUTPUT  ${output}
             #COMMAND ${TOOLS_X86_BIN_DIR}/aidl-cpp -I${baseDir} "${baseDir}/${src}" ${GENERATED_DIR}/${aidlName}/include ${output}
             #COMMAND ${CMAKE_BINARY_DIR}/aidl --lang=cpp --ninja -I ${base_dir} "${base_dir}/${src}" --header_out ${GENERATED_DIR}/include -o ${GENERATED_DIR}
-            #COMMAND ${ANDROID_BUILD_TOOLS_DIR}/bin/aidl --lang=cpp -I${baseDir} "${baseDir}/${src}" --header_out ${GENERATED_DIR}/${aidlName}/include -o ${GENERATED_DIR}/${aidlName}
             COMMAND ${CMAKE_BINARY_DIR}/aidl --lang=cpp -I${baseDir} "${baseDir}/${src}" --header_out ${GENERATED_DIR}/${aidlName}/include -o ${GENERATED_DIR}/${aidlName}
             DEPENDS ${baseDir}/${src}
             COMMENT "[AIDL] ${src} -> ${output}"
@@ -780,19 +781,16 @@ if (BUILD_ENV_HOST)
 
     target_link_libraries(gtest PRIVATE pthread)
 
-    find_package(FLEX)
-    find_package(BISON)
-
-    set(FLEX_FOUND "True")
-    set(FLEX_EXECUTABLE "${ANDROID_BUILD_TOOLS_DIR}/bin/flex")
+    # flex and bison come from the build host - a distro package or a Yocto
+    # -native recipe - never from a prebuilt binary. The AOSP source tarball
+    # carries source only.
+    find_package(FLEX REQUIRED)
+    find_package(BISON 3.0 REQUIRED)
 
     set(FLEX_OUT "${GENERATED_DIR}/aidl_language_l.cpp")
     set(FLEX_SRC "${AIDL_DIR}/aidl_language_l.ll")
 
     FLEX_TARGET(lexer ${FLEX_SRC} ${FLEX_OUT})
-
-    set(BISON_FOUND "True")
-    set(BISON_EXECUTABLE "${ANDROID_BUILD_TOOLS_DIR}/bin/bison")
 
     set(BISON_OUT       "${GENERATED_DIR}/aidl_language_y.cpp")
     set(BISON_DEFINES   "${GENERATED_DIR}/aidl_language_y.h")

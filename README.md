@@ -1,8 +1,8 @@
 # Linux Binder IDL
 
 This project aims to build and test the Android Binder for the Linux desktop environment.
-The Android 13 AOSP source code is cloned from `Google's` repositories. The Android tag
- is __*android-13.0.0_r74*__, and the code has been modified to make it compatible with Linux.
+The Android 13 AOSP sources, tag __*android-13.0.0_r74*__, come from an AOSP source tarball
+defined by `aosp/manifest`, and `patches/` modifies them to build on Linux.
 The project is primarily designed to build the binder runtime libraries for embedded devices.
 It also provides the `aidl` compiler, a build-host tool that generates interface C++ from `.aidl`.
 The target ELF class follows the toolchain in `CC`/`CXX`, which is the only thing that decides it.
@@ -53,6 +53,7 @@ the switches have to be chosen from the target kernel's configuration.
 - Linux Kernel 5.16.x with binder enabled (Tested with 5.16.20)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (minimum GCC 9.4.0)
+- flex, bison 3.0 or later, and m4 (for the host AIDL compiler)
 
 **For detailed kernel configuration, runtime setup, and Yocto/BitBake integration, see [BUILD.md](BUILD.md).**
 **For the kernel-to-switch selection matrix, see [PROTOCOL.md](PROTOCOL.md).**
@@ -62,6 +63,12 @@ the switches have to be chosen from the target kernel's configuration.
 ## Build Steps
 
 Following are the build steps to build the binder framework, binder examples and aidl generator tool.
+
+**AOSP sources.** Every build script first runs `./aosp-source.sh provision`, which unpacks the
+AOSP source tarball into `android/` and applies `patches/`. The SDK publishes no tarball: generate
+it with `./aosp-source.sh generate`, upload it to your team's artifact store (e.g. Artifactory),
+and set `AOSP_SOURCE_URI` to it. Without either, `provision` generates it locally from
+`android.googlesource.com`. See [AOSP sources](BUILD.md#aosp-sources).
 
 
 ## Build Binder Framework
@@ -318,7 +325,7 @@ For fast validation during development:
 ```
 
 This runs a streamlined test that:
-1. Clones Android sources (if not present)
+1. Provisions the AOSP sources from the source tarball (if not present)
 2. Validates all build scripts
 3. Tests clean operations
 4. Builds host AIDL tools
@@ -337,7 +344,7 @@ For thorough validation before releases:
 ```
 
 This comprehensive test suite validates:
-- Android source repository cloning
+- AOSP source provisioning from the source tarball
 - All 8 required AOSP repositories
 - Patch application
 - Build script functionality

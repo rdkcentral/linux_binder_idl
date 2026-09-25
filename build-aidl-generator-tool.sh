@@ -100,9 +100,11 @@ if [ "$CLEAN_BUILD" = true ]; then
   echo "==> Cleaning all build artifacts and source directories..."
   # `clean` exists so a user can get back to a COMPLETELY clean environment, so
   # it takes the repository trees unconditionally - including android/, the
-  # cloned AOSP sources. Nothing here is conditional on how the build was
+  # unpacked AOSP sources. Nothing here is conditional on how the build was
   # directed: a clean that left something behind because of an environment
-  # variable would not be the thing this command is for.
+  # variable would not be the thing this command is for. downloads/ stays: it
+  # holds the AOSP source tarball, an input checked against its sha256 on every
+  # use, not build state.
   #
   # BUILD_DIR and OUT_DIR are cleaned as well as, not instead of, those trees.
   # They are the same paths by default; when HOST_BUILD_DIR / HOST_OUT_DIR have
@@ -132,6 +134,11 @@ if [ "$CLEAN_BUILD" = true ]; then
   exit 0
 fi
 
+# AOSP sources: unpack the tarball into android/ and apply patches/, unless it
+# is already current. The tarball comes from downloads/, from AOSP_SOURCE_URI,
+# or is generated from aosp/manifest - see ./aosp-source.sh help.
+"${ROOT_DIR}/aosp-source.sh" provision
+
 mkdir -p "${BUILD_DIR}"
 mkdir -p "${OUT_DIR}/bin"
 
@@ -153,10 +160,8 @@ else
   echo "Using m4:        ${M4}"
 fi
 
-# NOTE on bison: CMakeLists.txt hard-sets BISON_EXECUTABLE to the
-# vendored android/build-tools bison via a plain set() (no CACHE),
-# which would override any -DBISON_EXECUTABLE passed here. The M4
-# export above is sufficient: the vendored bison reads M4 at runtime.
+# flex and bison are the build host's own (find_package in CMakeLists.txt);
+# bison reads M4 at runtime, which is why the export above matters.
 
 # Force native host build: override any cross-compilation settings.
 # In a Yocto/SDK environment, CMAKE_TOOLCHAIN_FILE (OEToolchainConfig.cmake)

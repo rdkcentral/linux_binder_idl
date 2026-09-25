@@ -71,9 +71,6 @@ set(FWMANAGER_DIR ${BINDER_EXAMPLE_DIR}/FWManager)
 set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
 
-# Modify the android build-tools path if necessary
-set(ANDROID_BUILD_TOOLS_DIR "${CMAKE_SOURCE_DIR}/../android/build-tools/linux-x86")
-
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
     message("Set and create cmake install lib directory")
     set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib)
@@ -107,7 +104,6 @@ macro(AidlGenerator aidlName baseDir sources)
             OUTPUT  ${output}
             #COMMAND ${TOOLS_X86_BIN_DIR}/aidl-cpp -I${baseDir} "${baseDir}/${src}" ${GENERATED_DIR}/${aidlName}/include ${output}
             #COMMAND ${CMAKE_BINARY_DIR}/aidl --lang=cpp --ninja -I ${base_dir} "${base_dir}/${src}" --header_out ${GENERATED_DIR}/include -o ${GENERATED_DIR}
-            #COMMAND ${ANDROID_BUILD_TOOLS_DIR}/bin/aidl --lang=cpp -I${baseDir} "${baseDir}/${src}" --header_out ${GENERATED_DIR}/${aidlName}/include -o ${GENERATED_DIR}/${aidlName}
             COMMAND ${BUILD_OUT_DIR}/aidl --lang=cpp -I${baseDir} "${baseDir}/${src}" --header_out ${GENERATED_DIR}/${aidlName}/include -o ${GENERATED_DIR}/${aidlName}
             DEPENDS ${baseDir}/${src}
             COMMENT "[AIDL] ${src} -> ${output}"

@@ -17,7 +17,7 @@ not a failure). The runner exits non-zero if any test fails.
 | Test | Guards |
 | --- | --- |
 | `test_yocto_m4_regression.sh` | host AIDL build vs an old sourced `M4` (#30) |
-| `test_binder_4_9_fallbacks.sh` | binder builds against 4.9 kernel UAPI headers (#35) |
+| `test_binder_4_9_fallbacks.sh` | binder builds against 4.9 kernel UAPI headers (#35) and upstream 5.13+ ones |
 | `test_cmake_min_version_compat.sh` | no CMake sub-command newer than the declared `cmake_minimum_required` (#24) |
 | `test_interface_version_ordinal.py` | module-local snapshots emit the real interface VERSION ordinal (#32) |
 | `test_surface_dump_diff.py` | `dump-surface` / `diff-surface` classification rule table (#27) |

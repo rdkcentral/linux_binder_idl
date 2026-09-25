@@ -69,35 +69,9 @@ set(ANDROID_CORE_DIR ${ANDROID_DIR}/core)
 set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
 set(ANDROID_FMTLIB_DIR ${ANDROID_DIR}/fmtlib)
 set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
-set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
 
-###########################################################
-# Stage android kernel headers (linux/, asm/, asm-generic/)
-# so <linux/android/binder.h> resolves to the project's copy
-# instead of the host system's /usr/include version.
-# Only kernel UAPI headers are staged — NOT musl C library
-# headers — to avoid conflicts with the host's glibc.
-###########################################################
-set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
-if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
-    set(_SYSROOT_ARCH "x86_64-linux-musl")
-else()
-    set(_SYSROOT_ARCH "i686-linux-musl")
-endif()
-set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
-
-if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
-    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
-         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
-endif()
-
-# Prioritize project kernel headers over system /usr/include/linux/
-include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
+# Kernel UAPI headers (<linux/android/binder.h>) come from the toolchain's
+# sysroot: linux-libc-headers in Yocto, the distro's kernel headers on a host.
 
 ###########################################################
 find_package(PkgConfig)
@@ -393,7 +367,6 @@ set(ANDROID_CORE_DIR ${ANDROID_DIR}/core)
 set(ANDROID_NATIVE_DIR ${ANDROID_DIR}/native)
 set(ANDROID_FMTLIB_DIR ${ANDROID_DIR}/fmtlib)
 set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
-set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
 
 set(BINDER_DIR ${ANDROID_NATIVE_DIR}/libs/binder)
 set(LIBUTILS_DIR ${ANDROID_CORE_DIR}/libutils)
@@ -446,12 +419,16 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/InstallRunpath.cmake)
 binder_install_runpath()
 
 ###########################################################
-# Checkout Required repos from AOSP
+# AOSP sources - unpacked from the AOSP source tarball
+#
+# CMake never fetches them. ./aosp-source.sh provision unpacks the tarball into
+# android/ and applies patches/; the wrapper scripts run it, and a Yocto recipe
+# fetches the tarball in do_fetch (see BUILD.md).
 ###########################################################
-if (NOT EXISTS ${ANDROID_DIR})
-    execute_process(
-        COMMAND sh -c "${CMAKE_CURRENT_LIST_DIR}/clone-android-binder-repo.sh"
-    )
+if (NOT EXISTS ${ANDROID_DIR}/native)
+    message(FATAL_ERROR
+        "AOSP sources not found in ${ANDROID_DIR}. "
+        "Run ./aosp-source.sh provision first (see BUILD.md, 'AOSP sources').")
 endif()
 
 ###########################################################
@@ -1031,19 +1008,16 @@ if (BUILD_HOST_AIDL)
     #######################################################
     # FLEX/BISON for AIDL language
     #######################################################
-    find_package(FLEX)
-    find_package(BISON)
-
-    set(FLEX_FOUND "True")
-    set(FLEX_EXECUTABLE "${ANDROID_BUILD_TOOLS_DIR}/bin/flex")
+    # flex and bison come from the build host - a distro package or a Yocto
+    # -native recipe - never from a prebuilt binary. The AOSP source tarball
+    # carries source only.
+    find_package(FLEX REQUIRED)
+    find_package(BISON 3.0 REQUIRED)
 
     set(FLEX_OUT "${GENERATED_DIR}/aidl_language_l.cpp")
     set(FLEX_SRC "${AIDL_DIR}/aidl_language_l.ll")
 
     FLEX_TARGET(lexer ${FLEX_SRC} ${FLEX_OUT})
-
-    set(BISON_FOUND "True")
-    set(BISON_EXECUTABLE "${ANDROID_BUILD_TOOLS_DIR}/bin/bison")
 
     set(BISON_OUT       "${GENERATED_DIR}/aidl_language_y.cpp")
     set(BISON_DEFINES   "${GENERATED_DIR}/aidl_language_y.h")

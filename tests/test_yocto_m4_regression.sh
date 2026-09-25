@@ -150,7 +150,8 @@ test_build_with_m4_not_on_path() {
               make awk sed grep cut tr wc find xargs touch cat \
               printf echo true false ls expr basename dirname \
               mkdir chmod cp mv rm tee head tail uname realpath \
-              which dirname date python3 git objdump objcopy strip; do
+              which dirname date python3 git objdump objcopy strip \
+              sha256sum tar gzip patch mktemp; do
     if command -v "${tool}" >/dev/null 2>&1; then
       ln -sf "$(command -v "${tool}")" "${stripped_bin}/${tool}"
     fi

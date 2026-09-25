@@ -28,7 +28,70 @@ out/
 - Ubuntu 22.04 LTS (or similar)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (GCC 9.4.0 minimum)
+- For the host AIDL compiler: flex, bison 3.0 or later, and m4, from the build host (distro
+  packages; in Yocto, `flex-native` and `bison-native`). No prebuilt tool is used
 - For cross-compilation: ARM toolchain (e.g., `arm-linux-gnueabihf-gcc`)
+
+## AOSP sources
+
+```mermaid
+flowchart LR
+    M["aosp/manifest<br/>repositories + commits"] -->|./aosp-source.sh generate| T["AOSP source tarball<br/>sha256 in aosp/aosp-source.sha256"]
+    T -->|upload| S["your team's artifact store<br/>(e.g. Artifactory)"]
+    S -->|AOSP_SOURCE_URI| Y["Yocto: do_fetch"]
+    S -->|AOSP_SOURCE_URI| P["Standalone: ./aosp-source.sh provision"]
+    Y --> U["android/ = unpacked tarball<br/>+ patches/*.patch"]
+    P --> U
+```
+
+The SDK builds against one AOSP source tarball. `aosp/manifest` defines it: each
+AOSP repository, the exact commit, and the paths taken. The same manifest always
+produces a byte-identical tarball, and `aosp/aosp-source.sha256` records its
+sha256. The tarball holds unpatched upstream source; `patches/*.patch` is applied
+on top at build time, by `./aosp-source.sh` in both Yocto and standalone builds.
+
+**The tarball is this module's source and nothing else.** It carries no prebuilt
+binary (`generate` refuses one), no build tools and no kernel headers. The build
+environment - the SC docker image, or Yocto - provides the tools, and the
+toolchain's sysroot provides the kernel UAPI headers (`<linux/android/binder.h>`,
+from `linux-libc-headers` in Yocto). A recipe therefore fetches and builds this
+module only.
+
+**The SDK publishes no tarball, and the location in the reference recipe is a
+placeholder.** Each team hosts its own copy:
+
+1. In a checkout of the SDK release you build, run `./aosp-source.sh generate`.
+   It writes `downloads/<name>` and checks it against `aosp/aosp-source.sha256`.
+2. Upload that file to your team's artifact store (e.g. Artifactory).
+3. Point builds at it: `AOSP_SOURCE_URI` in the recipe (or a `PREMIRRORS`
+   entry mapping the placeholder), and `AOSP_SOURCE_URI` in the environment for
+   standalone builds.
+
+The sha256 is the same wherever the tarball is hosted, so any copy can be
+checked against the one in the repository. `./aosp-source.sh name` and
+`./aosp-source.sh sha256` print the file name and sha256 for the checked-out
+revision.
+
+**Standalone builds.** The wrapper scripts run `./aosp-source.sh provision`,
+which leaves `android/` unpacked and patched. It takes the tarball from
+`downloads/`, else from `AOSP_SOURCE_URI`, else generates it from the manifest
+(this needs git access to `android.googlesource.com`). A direct CMake build runs
+`./aosp-source.sh provision` before configuring; CMake stops if `android/` is
+missing and never fetches anything itself.
+
+**Changing a patch.** Edit `patches/<repo>.patch` and run
+`./aosp-source.sh unpack` (or any wrapper script, which re-provisions when the
+patch set has changed). The tree is rebuilt from the cached tarball with the new
+patch set; the tarball itself does not change.
+
+**Moving the AOSP baseline.** Edit `aosp/manifest`, run
+`./aosp-source.sh generate --update`, and commit both files. The tarball name
+carries a hash of the manifest, so a new baseline is never served from a cache
+under the old name. Upload the new tarball before building the release that
+uses it.
+
+`generate` needs git, GNU tar 1.28 or later and gzip; the other commands need
+tar, gzip, patch and sha256sum.
 
 ## Building Host Tools
 
@@ -210,6 +273,23 @@ PV ?= "2.7.0"
 SRCREV ?= "2.7.0"
 S = "${WORKDIR}/git"
 
+# AOSP sources: one tarball, defined by aosp/manifest in the SDK source and
+# identified by the sha256 below.
+#
+# AOSP_SOURCE_URI IS A PLACEHOLDER. The SDK publishes no tarball, and
+# artifacts.example.invalid does not exist. Before this recipe can fetch:
+#   1. run ./aosp-source.sh generate in a checkout of the SRCREV above;
+#   2. upload downloads/${AOSP_SOURCE_NAME} to your team's artifact store
+#      (e.g. Artifactory);
+#   3. set AOSP_SOURCE_URI to its URL in your layer, or map the placeholder
+#      through PREMIRRORS.
+# The sha256 is the same wherever the tarball is hosted. For another SRCREV,
+# ./aosp-source.sh name and ./aosp-source.sh sha256 print both values.
+AOSP_SOURCE_NAME = "aosp-android-13.0.0_r74-src-fede4b0b.tar.gz"
+AOSP_SOURCE_URI ?= "https://artifacts.example.invalid/linux-binder/${AOSP_SOURCE_NAME}"
+SRC_URI += "${AOSP_SOURCE_URI};name=aosp;subdir=git;downloadfilename=${AOSP_SOURCE_NAME}"
+SRC_URI[aosp.sha256sum] = "95fa27976cd03d321c8334af45a03d39b0ade4c74ba054b70cd7ccde7aa1622c"
+
 # libbinder provides liblog; do not also build liblog.bb.
 RPROVIDES:${PN}:append = " liblog"
 PROVIDES:append = " liblog"
@@ -254,6 +334,13 @@ EXTRA_OECMAKE += " \
 # from ${D} rather than packaging an empty one.
 do_configure:prepend() {
     unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+}
+
+# The tarball holds unpatched upstream. The SDK's patches/ is applied on top by
+# the same script a standalone build uses, so both build the same source.
+do_patch[postfuncs] += "linux_binder_aosp_patches"
+linux_binder_aosp_patches() {
+    ${S}/aosp-source.sh apply-patches --android-dir ${S}/android
 }
 
 do_install:append() {
@@ -378,6 +465,11 @@ bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
 
 **Key Points:**
 
+- **`AOSP_SOURCE_URI` is a placeholder**: the recipe fetches the AOSP source tarball in `do_fetch`
+  and checks it against `SRC_URI[aosp.sha256sum]`, but the SDK hosts no tarball and
+  `artifacts.example.invalid` does not exist. Generate the tarball, upload it to your team's
+  artifact store and set `AOSP_SOURCE_URI` - see [AOSP sources](#aosp-sources). No task after
+  `do_fetch` needs network access
 - **The protocol is stated, because there is one**: every supported platform is
   protocol 8, so the recipe says `-DBINDER_PROTOCOL=8` and there is nothing to
   work out. See *Deriving the protocol from the kernel* below for the fleets
@@ -675,7 +767,7 @@ build that should *stop* if the toolchain is not what was expected.
 
 - All required CMake variables
 - Directory creation
-- Android source cloning
+- AOSP sources, via `./aosp-source.sh provision` (see [AOSP sources](#aosp-sources))
 - Installation to `out/` directories
 
 **Use Cases:**
@@ -1100,8 +1192,9 @@ and its systemd unit, [`example/yocto/files/servicemanager.service`](example/yoc
 [Integration with Yocto/Bitbake](#integration-with-yoctobitbake) explains each line. To move a
 legacy recipe onto it:
 
-- Remove the `setup-env.sh` sourcing and any `clone_android_binder_repo` call. CMake fetches the
-  AOSP sources itself during configure.
+- Remove the `setup-env.sh` sourcing and any `clone_android_binder_repo` call. The AOSP sources
+  come from the AOSP source tarball: add the `AOSP_SOURCE_*` lines and the `do_patch` step from the
+  reference recipe, and host the tarball as [AOSP sources](#aosp-sources) describes.
 - Remove `BUILD_ENV_YOCTO`; setting it from a recipe has no effect.
 - Pass `-DBUILD_HOST_AIDL=OFF` and `-DBINDER_PROTOCOL=8`, or `7` on a row A platform
   (see [Which row is your platform?](#which-row-is-your-platform)).

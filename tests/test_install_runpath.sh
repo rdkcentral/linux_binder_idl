@@ -41,7 +41,7 @@ skip() { echo "  SKIP  $1"; exit 0; }
 
 command -v cmake >/dev/null 2>&1 || skip "#62: cmake not available"
 [ -d "${ROOT}/android/native/libs/binder" ] || \
-    skip "#62: AOSP sources not checked out (run clone-android-binder-repo.sh)"
+    skip "#62: AOSP sources not unpacked (run ./aosp-source.sh provision)"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
