@@ -7,13 +7,13 @@ out/
 - **Major outputs:**
   - `out/target/`: Binder runtime libraries (e.g., `libbinder.so`, `servicemanager`) for ARM/embedded
   - `out/host/`: AIDL compiler tools (`aidl`, `aidl-cpp`) for x86_64 build host
-- **AIDL codegen is *offline only*:** Architecture team generates C++ from `.aidl` using host tools, commits generated code. *Production builds never run codegen or ship host tools.*
+- **AIDL codegen runs on the build host:** `aidl` is a host tool and no target image carries it. A consumer either generates C++ once and commits it, or generates it during its own build (as `build-binder-example.sh` does). The SDK supports both.
 - **Two-phase build design:** Core SDK (Android libs + servicemanager) is built once; AIDL compiler reuses these libs instead of rebuilding them.
 - **Source management:** AOSP sources in `android/` cloned by `clone-android-binder-repo.sh`, patched via `patches/*.patch` - **never manually edit `android/` contents**.
 
 ## Build & Workflow Patterns
 
-### Developer/Architecture Team (Wrapper Scripts)
+### Developer Builds (Wrapper Scripts)
 
 - `build-linux-binder-aidl.sh`: Build target runtime (bitness follows the toolchain; assert it with `TARGET_BITNESS`)
   - Also builds host AIDL by default; use `no-host-aidl` to skip if already available
@@ -40,10 +40,10 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 
 ### AIDL Code Generation Workflow
 
-1. Architecture team builds AIDL compiler: `./build-aidl-generator-tool.sh`
+1. Build the AIDL compiler on the build host: `./build-aidl-generator-tool.sh`
 2. Generate C++ from `.aidl`: `cd example && ./generate_cpp.sh` (use `clean` to regenerate)
-3. Commit generated `.cpp`/`.h` files to `example/stable/generated/FWManager/`
-4. Production builds compile pre-generated C++ only (no runtime codegen)
+3. The example writes it to `example/stable/generated/FWManager/`, which is build output and not committed
+4. The target build compiles that C++; the compiler itself stays on the host
 
 ### API Versioning & Dependencies
 
@@ -76,7 +76,7 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 
 - `android/`: AOSP sources (aidl, core, native, libbase, logging, fmtlib, googletest) - cloned, never modified directly
 - `patches/*.patch`: Local changes to AOSP code, applied during `clone-android-binder-repo.sh`
-- `host/`: Python tooling for interface versioning (architecture team only)
+- `host/`: Python tooling for interface versioning (runs on the build host)
   - `aidl_ops.py`: Main CLI for update-api, freeze-api, generate-source operations
   - `aidl_interface.py`, `aidl_api.py`: Interface version management
   - `interface-update.py`: Batch interface updates

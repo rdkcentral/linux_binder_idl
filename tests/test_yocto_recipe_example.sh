@@ -30,7 +30,8 @@
 #   2. It derives the protocol from the kernel's RESOLVED .config, not from a
 #      defconfig, which can request a symbol the kernel no longer has and have
 #      that request dropped in silence.
-#   3. BUILD.md's recipe block has not drifted from it. The doc inlines the
+#   3. CMake's own install rules run, so the package is not empty.
+#   4. BUILD.md's recipe block has not drifted from it. The doc inlines the
 #      recipe for readability, and two copies of one file is how they diverge.
 #
 # Run: ./tests/test_yocto_recipe_example.sh
@@ -134,7 +135,23 @@ if [ -f "${DERIVE_INC}" ]; then
     fi
 fi
 
-# 4. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
+# 4. CMake's install rules always run. CMake skips them when it sees an SDK
+#    environment, and the recipe would then package an empty runtime, so the
+#    recipe clears those variables before configure and checks ${D} after
+#    install. Only ACTIVE lines count, for the reason given in check 1.
+ACTIVE="$(grep -v '^[[:space:]]*#' "${RECIPE}")"
+if printf '%s\n' "${ACTIVE}" | grep -qE 'unset[[:space:]]+OECORE_NATIVE_SYSROOT[[:space:]]+OECORE_TARGET_SYSROOT'; then
+    pass "clears the SDK environment before configure"
+else
+    fail "does not unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT - CMake would skip its install rules"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qF 'bbfatal' && printf '%s\n' "${ACTIVE}" | grep -qF '${libdir}/libbinder.so'; then
+    pass "do_install fails when the runtime is missing from \${D}"
+else
+    fail "do_install does not check that libbinder.so reached \${D}"
+fi
+
+# 5. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
 #    must appear in the recipe; the recipe may carry more (its licence header,
 #    SRC_URI, systemd) than the doc chooses to show.
 #

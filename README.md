@@ -4,7 +4,7 @@ This project aims to build and test the Android Binder for the Linux desktop env
 The Android 13 AOSP source code is cloned from `Google's` repositories. The Android tag
  is __*android-13.0.0_r74*__, and the code has been modified to make it compatible with Linux.
 The project is primarily designed to build the binder runtime libraries for embedded devices.
-It also provides the `aidl` compiler for the architecture team to generate interface code offline.
+It also provides the `aidl` compiler, a build-host tool that generates interface C++ from `.aidl`.
 The target ELF class follows the toolchain in `CC`/`CXX`, which is the only thing that decides it.
 The binder wire protocol does not follow the toolchain: it defaults to **8**, which every supported
 platform serves, and only a legacy platform states otherwise.
@@ -117,7 +117,7 @@ out/target/
 
 ## Build AIDL generator tool
 
-**Note:** The AIDL compiler is primarily used by the architecture team for offline interface code generation. Production Yocto/BitBake builds do NOT require building or installing the AIDL compiler (they use pre-generated sources).
+**Note:** The AIDL compiler runs on the build host. A Yocto/BitBake target recipe does not build or install it; the interface C++ it compiles is generated on the host, either once and committed or during the consumer's own build.
 
 ### Run below command to build aidl generator tool
 
@@ -210,7 +210,7 @@ All wrapper scripts support `--help` and `--clean` options:
 # Build examples (includes SDK build)
 ./build-binder-example.sh [--clean] [--clean-aidl]
 
-# Build AIDL compiler (architecture team only)
+# Build AIDL compiler (build host only)
 ./build-aidl-generator-tool.sh [--clean]
 ```
 
@@ -224,7 +224,7 @@ Development wrapper scripts (`build-*.sh`) automatically handle CMake variables.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `OFF` |
+| `BUILD_HOST_AIDL` | Build AIDL compiler (build host only) | `OFF` |
 | `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
 | `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
 
@@ -293,7 +293,7 @@ out/target/
         └── libfwmanager.so
 ```
 
-**Host AIDL Compiler** (architecture team only) is installed to `out/host/`:
+**Host AIDL Compiler** (build host only) is installed to `out/host/`:
 
 ```bash
 out/host/

@@ -186,9 +186,9 @@ export TARGET_BITNESS=32
 
 ### Production Build (CMake Direct)
 
-**Production build systems (Yocto/BitBake) MUST call CMake directly** with explicit variables. The wrapper scripts (`build-*.sh`) are convenience tools for developers and architecture team members only - they are NOT suitable for production recipes.
+**Production build systems (Yocto/BitBake) MUST call CMake directly** with explicit variables. The wrapper scripts (`build-*.sh`) are convenience tools for developer builds - they are NOT suitable for production recipes.
 
-**Production builds only require TARGET libraries** - the AIDL compiler is used offline by the architecture team (using `./build-aidl-generator-tool.sh` for convenience) to generate interface code, which is then committed to the repository.
+**A target image carries only the runtime libraries.** The AIDL compiler is a build-host tool (`./build-aidl-generator-tool.sh` builds it). A consumer runs it either once, committing the generated C++, or as a step of its own build; the target recipe below is the same either way.
 
 **BitBake Recipe Example** — this is `example/yocto/linux-binder.bb`, kept
 in the repository so you can copy or diff it rather than retype it.
@@ -204,9 +204,10 @@ SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_UR
 SRC_URI += "file://servicemanager.service"
 
 # Pin to a released tag. A branch name or a feature-branch SHA makes the build
-# unreproducible and is not a supported configuration.
-PV ?= "2.6.0"
-SRCREV ?= "2.6.0"
+# unreproducible and is not a supported configuration. The switches below need
+# 2.7.0 or later.
+PV ?= "2.7.0"
+SRCREV ?= "2.7.0"
 S = "${WORKDIR}/git"
 
 # libbinder provides liblog; do not also build liblog.bb.
@@ -245,7 +246,21 @@ EXTRA_OECMAKE += " \
     -DBINDER_PROTOCOL=8 \
 "
 
+# CMake installs the runtime - libraries, headers and servicemanager - with the
+# RUNPATH set for the install prefix. It skips those install rules when it finds
+# an SDK environment (OECORE_NATIVE_SYSROOT or OECORE_TARGET_SYSROOT). A BitBake
+# task does not set them, but a devtool or eSDK shell can carry them in, so they
+# are cleared before configure, and do_install stops if the runtime is missing
+# from ${D} rather than packaging an empty one.
+do_configure:prepend() {
+    unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+}
+
 do_install:append() {
+    for f in ${libdir}/libbinder.so ${bindir}/servicemanager ${includedir}/binder/IBinder.h; do
+        [ -e "${D}$f" ] || bbfatal "CMake did not install $f - the target runtime is incomplete"
+    done
+
     install -d ${D}${systemd_unitdir}/system
     install -m 0644 ${WORKDIR}/servicemanager.service ${D}${systemd_unitdir}/system
 }
@@ -372,24 +387,24 @@ bitbake -e linux-binder | grep ^BINDER_PROTOCOL_RESOLVED
 - **Production builds**: Only build target runtime libraries. `BUILD_HOST_AIDL` is `OFF` by default,
   so a recipe gets the production path without asking for it; the line above states it anyway,
   because a build spec states its switches
-- **No AIDL compiler needed**: Architecture team generates C++ code offline using AIDL compiler
-- **Pre-generated code committed**: All AIDL-generated C++ files are in source control
-- **No code generation at build time**: Production builds compile pre-generated C++ only
+- **No AIDL compiler on the target**: the compiler is a build-host tool. Interface C++ is
+  generated on the host - once and committed, or during the consumer's build - and the target
+  compiles the result
 - **Servicemanager startup**: Systemd service auto-starts on boot via `SYSTEMD_AUTO_ENABLE`
 
 ### CMake Variables Reference
 
 **When to use what:**
 - **Production (Yocto/BitBake)**: Call CMake directly with explicit variables (documented below)
-- **Development/Architecture Team**: Use wrapper scripts for convenience (see [Manual/Development Build](#manualdevelopment-build-wrapper-scripts) section)
+- **Development builds**: Use wrapper scripts for convenience (see [Manual/Development Build](#manualdevelopment-build-wrapper-scripts) section)
 
-The following tables list CMake variables for **direct CMake invocation in production build systems**. Wrapper scripts handle these automatically - developers and architecture team members do NOT need to configure these manually.
+The following tables list CMake variables for **direct CMake invocation in production build systems**. Wrapper scripts handle these automatically - a developer build does NOT need to configure these manually.
 
 #### Required Configuration Variables
 
 | Variable | Description | Default | Required? |
 |----------|-------------|---------|-----------|
-| `BUILD_HOST_AIDL` | Build host AIDL compiler (architecture team only) | `OFF` | Optional - already `OFF`; a production spec states it anyway |
+| `BUILD_HOST_AIDL` | Build host AIDL compiler (build host only) | `OFF` | Optional - already `OFF`; a production spec states it anyway |
 
 #### Wire protocol and target bitness
 
@@ -535,7 +550,7 @@ convenience and are not used in a recipe.
 
 | Definition | Values | What it does |
 | ---------- | ------ | ------------ |
-| `-DBUILD_HOST_AIDL` | `ON` / `OFF` | Build the host AIDL compiler. `OFF` for anything that ships: the compiler runs on a build host to generate C++ offline, and no target image carries it. Leaving it `ON` also pulls in flex and bison. |
+| `-DBUILD_HOST_AIDL` | `ON` / `OFF` | Build the host AIDL compiler. `OFF` for a target build: the compiler runs on the build host, and no target image carries it. Leaving it `ON` also pulls in flex and bison. |
 | `-DTARGET_BITNESS` | `32` / `64` | **Optional.** The ELF class comes from `CC`/`CXX`; this asserts what the compiler is, and the build stops if they disagree. Pass it when a wrong toolchain should fail loudly rather than produce a host-native library. |
 | `-DBINDER_PROTOCOL` | `7` / `8` | The binder **wire protocol**, which is a property of the **kernel**, not of the build. `8` unless the target kernel is 32-bit at 4.17 or older with `CONFIG_ANDROID_BINDER_IPC_32BIT=y`. Getting this wrong builds and links cleanly, then terminates every binder process at startup. |
 | `-DCMAKE_INSTALL_PREFIX` | path | Where `cmake --install` stages the result. |
@@ -620,7 +635,7 @@ grep -ao 'ipcSetDataReferenceEPKh[jm]PK[yj]' <prefix>/lib/libbinder.so | sort -u
 #   ...PKj  ->  protocol 7
 ```
 
-**Host AIDL compiler (architecture team only):**
+**Host AIDL compiler (build host only):**
 
 ```bash
 cmake -S . -B build-host \
@@ -632,7 +647,7 @@ cmake --build build-host -j$(nproc)
 cmake --install build-host
 ```
 
-Generates interface C++ offline; the result is committed and never shipped.
+Builds the compiler that generates interface C++ on the build host. The compiler is never shipped on the target.
 `./build-aidl-generator-tool.sh` does the same thing with less to remember.
 
 **Non-Yocto note:** for a direct build with AIDL generation enabled, ensure
@@ -654,7 +669,7 @@ build that should *stop* if the toolchain is not what was expected.
 
 ### Manual/Development Build (Wrapper Scripts)
 
-**These scripts are for development and architecture team convenience only.** Production builds (Yocto/BitBake) should call CMake directly as shown in the examples above.
+**These scripts are for development convenience only.** Production builds (Yocto/BitBake) should call CMake directly as shown in the examples above.
 
 **Wrapper scripts automatically handle:**
 
@@ -665,11 +680,11 @@ build that should *stop* if the toolchain is not what was expected.
 
 **Use Cases:**
 
-- Architecture team building AIDL compiler for code generation
+- Building the AIDL compiler for code generation
 - Developers testing binder functionality locally
 - Quick builds without configuring CMake variables manually
 
-**Build AIDL Compiler (Architecture Team):**
+**Build AIDL Compiler (build host):**
 
 ```bash
 ./build-aidl-generator-tool.sh
@@ -1080,139 +1095,26 @@ journalctl -u servicemanager.service -n 50
 
 ## Yocto/BitBake Recipe Migration
 
-### Updated Recipe Template
+Start from the reference recipe, [`example/yocto/linux-binder.bb`](example/yocto/linux-binder.bb),
+and its systemd unit, [`example/yocto/files/servicemanager.service`](example/yocto/files/servicemanager.service).
+[Integration with Yocto/Bitbake](#integration-with-yoctobitbake) explains each line. To move a
+legacy recipe onto it:
 
-Here's the modernized BitBake recipe for the current build system:
-
-```bash
-DESCRIPTION = "Android Binder IPC for Linux"
-SECTION = "libs"
-LICENSE = "Apache-2.0"
-LIC_FILES_CHKSUM = "file://LICENSE;md5=86d3f3a95c324c9479bd8986968f4327"
-
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-
-# Source repository
-SRC_URI = "git://github.com/your-org/linux_binder_idl.git;protocol=https;branch=main"
-SRC_URI += "file://servicemanager.service"
-
-SRCREV = "${AUTOREV}"
-S = "${WORKDIR}/git"
-
-# Build dependencies
-DEPENDS = ""
-
-# Use CMake
-inherit cmake systemd
-
-# CMake configuration - production target build only
-EXTRA_OECMAKE = " \
-    -DBUILD_HOST_AIDL=OFF \
-    -DBINDER_PROTOCOL=8 \
-    -DCMAKE_INSTALL_PREFIX=${prefix} \
-"
-
-# Clone Android sources before CMake configuration
-do_configure:prepend() {
-    cd ${S}
-    ${S}/clone-android-binder-repo.sh
-}
-
-# Install systemd service
-do_install:append() {
-    install -d ${D}${systemd_unitdir}/system
-    install -m 0644 ${WORKDIR}/servicemanager.service ${D}${systemd_unitdir}/system/
-}
-
-# Systemd integration
-SYSTEMD_SERVICE:${PN} = "servicemanager.service"
-SYSTEMD_AUTO_ENABLE:${PN} = "enable"  # Auto-start on boot
-
-# Package files
-FILES:${PN} = " \
-    ${libdir}/lib*.so* \
-    ${bindir}/servicemanager \
-    ${systemd_unitdir}/system/servicemanager.service \
-"
-
-FILES:${PN}-dev = " \
-    ${includedir}/* \
-"
-
-# Allow shared libraries in main package
-FILES_SOLIBSDEV = ""
-
-# Skip dev-elf checks (expected for binder libraries)
-INSANE_SKIP:${PN} = "dev-deps"
-INSANE_SKIP:${PN}-dev = "dev-elf"
-```
-
-### Key Changes from Legacy Recipe
-
-**Removed:**
-
-- ❌ `setup-env.sh` sourcing
-- ❌ Manual `clone_android_binder_repo` function call
-- ❌ `BUILD_ENV_YOCTO` flag (no longer exists)
-
-**Added:**
-
-- ✅ `BUILD_HOST_AIDL=OFF` flag (exclude AIDL compiler from production build)
-- ✅ `clone-android-binder-repo.sh` script invocation
-- ✅ `BINDER_PROTOCOL` stated explicitly, from the target kernel's config
-- ✅ `SYSTEMD_AUTO_ENABLE` for automatic service enablement
-
-**Unchanged:**
-
-- CMake inheritance
-- Systemd service installation
-- Package file lists
-
-### Creating the Systemd Service File
-
-Create `files/servicemanager.service`:
-
-```ini
-[Unit]
-Description=Android Binder Service Manager
-Documentation=https://source.android.com/docs/core/architecture/hidl/binder-ipc
-After=local-fs.target
-Before=basic.target
-Requires=dev-binder.device
-After=dev-binder.device
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/servicemanager
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=servicemanager
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/dev/binder /dev/binderfs
-
-# Device access
-DeviceAllow=/dev/binder rw
-DeviceAllow=/dev/binderfs/binder rw
-
-[Install]
-WantedBy=multi-user.target
-```
+- Remove the `setup-env.sh` sourcing and any `clone_android_binder_repo` call. CMake fetches the
+  AOSP sources itself during configure.
+- Remove `BUILD_ENV_YOCTO`; setting it from a recipe has no effect.
+- Pass `-DBUILD_HOST_AIDL=OFF` and `-DBINDER_PROTOCOL=8`, or `7` on a row A platform
+  (see [Which row is your platform?](#which-row-is-your-platform)).
+- Pin `SRCREV` to a released tag, 2.7.0 or later, never `${AUTOREV}`.
 
 ### Testing the Yocto Build
 
 ```bash
 # Build the recipe
-bitbake linux-binder-idl
+bitbake linux-binder
 
 # Check installed files
-oe-pkgdata-util list-pkg-files linux-binder-idl
+oe-pkgdata-util list-pkg-files linux-binder
 
 # Test on target device
 ssh root@target

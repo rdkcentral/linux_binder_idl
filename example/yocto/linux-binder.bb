@@ -23,8 +23,8 @@
 # against rather than retype; tests/test_yocto_recipe_example.sh fails if the
 # two disagree or if a required switch goes missing.
 #
-# It builds the target runtime libraries only. The AIDL compiler is a host tool
-# the architecture team runs offline, and no target image carries it.
+# It builds the target runtime libraries only. The AIDL compiler is a build-host
+# tool, and no target image carries it.
 
 SUMMARY = "Linux Binder IPC runtime (libbinder, libutils, servicemanager)"
 LICENSE = "Apache-2.0"
@@ -40,9 +40,10 @@ SRC_URI = "${RDKCENTRAL_GITHUB_ROOT}/linux_binder_idl;${RDKCENTRAL_GITHUB_SRC_UR
 SRC_URI += "file://servicemanager.service"
 
 # Pin to a released tag. A branch name or a feature-branch SHA makes the build
-# unreproducible and is not a supported configuration.
-PV ?= "2.6.0"
-SRCREV ?= "2.6.0"
+# unreproducible and is not a supported configuration. The switches below need
+# 2.7.0 or later.
+PV ?= "2.7.0"
+SRCREV ?= "2.7.0"
 S = "${WORKDIR}/git"
 
 # libbinder provides liblog; do not also build liblog.bb.
@@ -81,7 +82,21 @@ EXTRA_OECMAKE += " \
     -DBINDER_PROTOCOL=8 \
 "
 
+# CMake installs the runtime - libraries, headers and servicemanager - with the
+# RUNPATH set for the install prefix. It skips those install rules when it finds
+# an SDK environment (OECORE_NATIVE_SYSROOT or OECORE_TARGET_SYSROOT). A BitBake
+# task does not set them, but a devtool or eSDK shell can carry them in, so they
+# are cleared before configure, and do_install stops if the runtime is missing
+# from ${D} rather than packaging an empty one.
+do_configure:prepend() {
+    unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+}
+
 do_install:append() {
+    for f in ${libdir}/libbinder.so ${bindir}/servicemanager ${includedir}/binder/IBinder.h; do
+        [ -e "${D}$f" ] || bbfatal "CMake did not install $f - the target runtime is incomplete"
+    done
+
     install -d ${D}${systemd_unitdir}/system
     install -m 0644 ${WORKDIR}/servicemanager.service ${D}${systemd_unitdir}/system
 }
