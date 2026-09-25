@@ -9,7 +9,7 @@ out/
   - `out/host/`: AIDL compiler tools (`aidl`, `aidl-cpp`) for x86_64 build host
 - **AIDL codegen runs on the build host:** `aidl` is a host tool and no target image carries it. A consumer either generates C++ once and commits it, or generates it during its own build (as `build-binder-example.sh` does). The SDK supports both.
 - **Two-phase build design:** Core SDK (Android libs + servicemanager) is built once; AIDL compiler reuses these libs instead of rebuilding them.
-- **Source management:** AOSP sources in `android/` cloned by `clone-android-binder-repo.sh`, patched via `patches/*.patch` - **never manually edit `android/` contents**.
+- **Source management:** AOSP sources in `android/` are unpacked from the AOSP source tarball by `aosp-source.sh` and patched via `patches/*.patch` - **never manually edit `android/` contents**. The SDK publishes no tarball; each team generates and hosts its own (see *Source Code Management*).
 
 ## Build & Workflow Patterns
 
@@ -67,15 +67,20 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 
 ### Source Code Management
 
-- **AOSP sources:** Cloned by `clone-android-binder-repo.sh` from Google repos with tag `android-13.0.0_r74`
-- **Patches applied automatically:** `patches/*.patch` files modify AOSP code during clone (aidl.patch, core.patch, libbase.patch, logging.patch, native.patch)
+- **AOSP sources:** one source tarball, defined by `aosp/manifest` (repositories, exact commits, paths; tag `android-13.0.0_r74`) and identified by `aosp/aosp-source.sha256`. `./aosp-source.sh generate` builds it byte-identically from the manifest
+- **The tarball location is each team's own:** the SDK publishes no tarball, and `AOSP_SOURCE_URI` in `example/yocto/linux-binder.bb` is a placeholder on a `.invalid` host. A team runs `generate`, uploads the file to its artifact store (e.g. Artifactory), and sets `AOSP_SOURCE_URI`. Keep the placeholder a placeholder; never put a real URL, or the tarball itself, in the repository
+- **Patches applied at build time:** the tarball is unpatched upstream; `patches/*.patch` (aidl, core, libbase, logging, native) is applied by `aosp-source.sh` - `provision`/`unpack` for standalone builds, `apply-patches` from the recipe's `do_patch`
+- **Nothing clones AOSP at build time:** CMake stops if `android/` is missing; the wrappers run `./aosp-source.sh provision`
 - **Never edit `android/` directly:** All modifications must go through patches; `android/` directory is gitignored
-- **Re-clone to update patches:** Run `./clone-android-binder-repo.sh` again to apply new patch changes
+- **After changing a patch:** run `./aosp-source.sh unpack` (or any wrapper script) - the tree is rebuilt from the cached tarball; the tarball does not change
+- **Moving the baseline:** edit `aosp/manifest`, run `./aosp-source.sh generate --update`, commit both files, and update `AOSP_SOURCE_NAME` / `SRC_URI[aosp.sha256sum]` in the reference recipe (`tests/test_yocto_recipe_example.sh` fails until they match)
 
 ### File Organization
 
-- `android/`: AOSP sources (aidl, core, native, libbase, logging, fmtlib, googletest) - cloned, never modified directly
-- `patches/*.patch`: Local changes to AOSP code, applied during `clone-android-binder-repo.sh`
+- `android/`: AOSP sources (aidl, core, native, libbase, logging, fmtlib, googletest, build-tools subset) - unpacked from the tarball, never modified directly
+- `aosp/`: the AOSP source tarball's definition - `manifest` and `aosp-source.sha256`
+- `downloads/`: tarball cache (gitignored)
+- `patches/*.patch`: Local changes to AOSP code, applied by `aosp-source.sh` on top of the tarball
 - `host/`: Python tooling for interface versioning (runs on the build host)
   - `aidl_ops.py`: Main CLI for update-api, freeze-api, generate-source operations
   - `aidl_interface.py`, `aidl_api.py`: Interface version management
@@ -142,12 +147,13 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 - **Never** write a deprecated switch spelling in new code, recipes or documentation
 - **Never** allow `/usr/include` in compile commands (CMake explicitly disables this)
 - **Never** manually edit files in `android/` directory - use patches instead
-- **Always** commit AIDL-generated C++ to `stable/generated/`; never generate at production build time
+- **Always** run the AIDL compiler on the build host; generated C++ is either committed or generated during the consumer's build - the SDK supports both
 - **Always** set `CC`/`CXX`/`CFLAGS`/`CXXFLAGS`/`LDFLAGS` for cross-compilation (Yocto sets these automatically)
 - **Always** ensure CFLAGS/CXXFLAGS/LDFLAGS include sysroot when cross-compiling
 - **Native builds:** Leave CC/CXX unset to use system GCC (CMake auto-detects)
 - **Remember** servicemanager must start before binder clients (systemd dependency ordering)
-- **Remember** to re-run `clone-android-binder-repo.sh` after modifying any `.patch` files
+- **Remember** to run `./aosp-source.sh unpack` after modifying any `.patch` file (wrapper scripts do it automatically)
+- **Never** commit the AOSP source tarball or replace the recipe's placeholder `AOSP_SOURCE_URI` with a real location
 
 ## Reference Files
 
@@ -156,7 +162,8 @@ Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF cla
 - [example/generate_cpp.sh](../example/generate_cpp.sh): AIDL codegen workflow reference
 - [host/aidl_ops.py](../host/aidl_ops.py): Interface versioning CLI (run with `--help`)
 - [CMakeLists.txt](../CMakeLists.txt): Core build logic - see lines 90–110 (warnings), 240+ (AidlGenerator)
-- [clone-android-binder-repo.sh](../clone-android-binder-repo.sh): AOSP source management and patching
+- [aosp-source.sh](../aosp-source.sh): AOSP source tarball - generate, provision, unpack, apply patches (run with `help`)
+- [aosp/manifest](../aosp/manifest): the AOSP baseline
 - [CHANGELOG.md](../CHANGELOG.md): Version history - latest is 1.1.0 with AIDL versioning support
 
 ---

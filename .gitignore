@@ -12,6 +12,8 @@ test_build.logcMakeCache.
 .installed_successfully
 .android_source_ready
 android/
+# AOSP source tarball cache - fill with ./aosp-source.sh generate, or from AOSP_SOURCE_URI
+downloads/
 */**/*.pyc
 local/
 out/

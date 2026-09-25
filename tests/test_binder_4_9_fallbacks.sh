@@ -52,21 +52,21 @@ command -v "${CXX}" >/dev/null 2>&1 || skip "${CXX} not installed"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/binder49.XXXXXX")"
 trap 'rm -rf "${WORK}"' EXIT
 
-# Obtain the upstream binder_module.h (the patch target). Prefer a local AOSP
-# checkout; otherwise fetch just the one file at the pinned tag.
-TAG="$(grep -oE 'android-[0-9.]+_r[0-9]+' "${ROOT}/clone-android-binder-repo.sh" | head -1)"
-SRC=""
-for c in "${ROOT}/android/frameworks/native" /tmp/aosp-native /tmp/aosp-verify; do
-    [ -f "${c}/libs/binder/binder_module.h" ] && { SRC="${c}"; break; }
-done
+# Obtain the upstream binder_module.h (the patch target), unpatched. Prefer the
+# AOSP source tarball, which holds unpatched upstream; otherwise fetch just the
+# one file at the commit aosp/manifest pins for native.
+NATIVE_COMMIT="$(awk '$1 == "native" { print $3 }' "${ROOT}/aosp/manifest")"
+TARBALL="${ROOT}/downloads/$("${ROOT}/aosp-source.sh" name 2>/dev/null)"
 mkdir -p "${WORK}/libs/binder"
-if [ -n "${SRC}" ]; then
-    cp "${SRC}/libs/binder/binder_module.h" "${WORK}/libs/binder/binder_module.h"
-elif command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && [ -n "${TAG}" ]; then
+if [ -f "${TARBALL}" ]; then
+    tar -xzOf "${TARBALL}" android/native/libs/binder/binder_module.h \
+        > "${WORK}/libs/binder/binder_module.h" 2>/dev/null \
+        || skip "binder_module.h not in ${TARBALL}"
+elif command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && [ -n "${NATIVE_COMMIT}" ]; then
     # googlesource ?format=TEXT returns base64, so base64 is required to decode.
-    url="https://android.googlesource.com/platform/frameworks/native/+/refs/tags/${TAG}/libs/binder/binder_module.h?format=TEXT"
+    url="https://android.googlesource.com/platform/frameworks/native/+/${NATIVE_COMMIT}/libs/binder/binder_module.h?format=TEXT"
     curl -fsSL "${url}" 2>/dev/null | base64 -d > "${WORK}/libs/binder/binder_module.h" 2>/dev/null \
-        || skip "could not fetch binder_module.h@${TAG}"
+        || skip "could not fetch binder_module.h@${NATIVE_COMMIT}"
 else
     skip "no AOSP source and no curl+base64 to fetch binder_module.h"
 fi

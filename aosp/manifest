@@ -1,0 +1,47 @@
+#/**
+# * Copyright 2026 RDK Management
+# *
+# * Licensed under the Apache License, Version 2.0 (the "License");
+# * you may not use this file except in compliance with the License.
+# * You may obtain a copy of the License at
+# *
+# * http://www.apache.org/licenses/LICENSE-2.0
+# *
+# * Unless required by applicable law or agreed to in writing, software
+# * distributed under the License is distributed on an "AS IS" BASIS,
+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# * See the License for the specific language governing permissions and
+# * limitations under the License.
+# *
+# * SPDX-License-Identifier: Apache-2.0
+# */
+#
+# The AOSP baseline the Binder SDK builds against.
+#
+# ./aosp-source.sh generate exports exactly these commits into the AOSP source
+# tarball, and the same manifest always produces a byte-identical tarball. Its
+# sha256 is in aosp/aosp-source.sha256. patches/<dir>.patch is applied on top at
+# build time; it is not in the tarball.
+#
+# Changing any non-comment line changes the tarball's name and sha256: run
+# ./aosp-source.sh generate --update and commit both files together.
+#
+# Format:
+#   tag <aosp release tag>                       - the release the commits belong to
+#   <dir> <repository> <commit> [<path>...]      - one repository; with paths, only
+#                                                  those paths are exported
+
+tag android-13.0.0_r74
+
+native      https://android.googlesource.com/platform/frameworks/native   ee3935f4c64d58f9f87ff6fac875cdad42f46038
+aidl        https://android.googlesource.com/platform/system/tools/aidl   dc1275ca875479c6d1467e018d27e6a41c7d4069
+fmtlib      https://android.googlesource.com/platform/external/fmtlib     1424396741302fb4722bdd63e19d84ab2475056d
+logging     https://android.googlesource.com/platform/system/logging      ec3daa6f52131c87da38e1c7be6b374e3ccf6e0d
+libbase     https://android.googlesource.com/platform/system/libbase      8436e04cfaa6c21be86b37e9599184d77c67faef
+core        https://android.googlesource.com/platform/system/core         8301b33dad51cafd9d08876fc91a7e5fa556dcd3
+googletest  https://android.googlesource.com/platform/external/googletest 1840bde20bfc67e7d00646ff1ac3906fd3838aa4
+
+# prebuilts/build-tools is ~900 MB; the build uses the kernel UAPI headers from
+# its sysroots, and flex, bison and m4 (with bison's data and libc++) for the
+# host AIDL compiler. The licence files travel with what they cover.
+build-tools https://android.googlesource.com/platform/prebuilts/build-tools 2d50582619688b8c5fbb38f85d81179bc1dfb7ec METADATA sysroots/x86_64-linux-musl/include sysroots/x86_64-linux-musl/COPYRIGHT sysroots/x86_64-linux-musl/LICENSE sysroots/x86_64-linux-musl/NOTICE.bionic sysroots/i686-linux-musl/include sysroots/i686-linux-musl/COPYRIGHT sysroots/i686-linux-musl/LICENSE sysroots/i686-linux-musl/NOTICE.bionic linux-x86/bin/bison linux-x86/bin/flex linux-x86/bin/m4 linux-x86/lib64/libc++.so common/bison common/flex

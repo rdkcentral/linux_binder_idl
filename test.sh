@@ -368,9 +368,9 @@ test_1() {
 }
 
 test_1_1() {
-    echo "Cloning Android sources (this may take several minutes)..."
-    if ./clone-android-binder-repo.sh >/tmp/clone.log 2>&1; then
-        print_pass "Clone script completed"
+    echo "Provisioning AOSP sources from the source tarball..."
+    if ./aosp-source.sh provision >/tmp/clone.log 2>&1; then
+        print_pass "aosp-source.sh provision completed"
 
         if [ -d "./android" ]; then
             print_pass "android/ directory created"
@@ -383,7 +383,7 @@ test_1_1() {
         REQUIRED_REPOS=("native" "aidl" "fmtlib" "logging" "libbase" "core" "googletest" "build-tools")
         for repo in "${REQUIRED_REPOS[@]}"; do
             if [ -d "./android/${repo}" ]; then
-                print_pass "Repository cloned: ${repo}"
+                print_pass "Repository unpacked: ${repo}"
             else
                 print_fail "Repository missing: ${repo}"
             fi
@@ -394,7 +394,7 @@ test_1_1() {
             print_info "Android source size: ${android_size}"
         fi
     else
-        print_fail "Clone script failed"
+        print_fail "aosp-source.sh provision failed"
         tail -20 /tmp/clone.log | tee -a "${TEST_LOG}"
         exit 1
     fi
@@ -402,10 +402,10 @@ test_1_1() {
 
 test_2() {
     echo "Checking scripts..."
-    if [ -x ./clone-android-binder-repo.sh ]; then
-        print_pass "clone-android-binder-repo.sh is executable"
+    if [ -x ./aosp-source.sh ]; then
+        print_pass "aosp-source.sh is executable"
     else
-        print_fail "clone-android-binder-repo.sh not found or not executable"
+        print_fail "aosp-source.sh not found or not executable"
     fi
     if [ -x ./build-aidl-generator-tool.sh ]; then
         print_pass "build-aidl-generator-tool.sh is executable"

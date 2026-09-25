@@ -327,6 +327,11 @@ if [ "$FORCE_BUILD" = true ]; then
   echo "    Cleaned: ${BUILD_DIR}"
 fi
 
+# AOSP sources: unpack the tarball into android/ and apply patches/, unless it
+# is already current. The tarball comes from downloads/, from AOSP_SOURCE_URI,
+# or is generated from aosp/manifest - see ./aosp-source.sh help.
+"${ROOT_DIR}/aosp-source.sh" provision
+
 # Remove stale in-source CMake artifacts from legacy builds.
 rm -rf "${ROOT_DIR}/build-target-cmake" 2>/dev/null || true
 rm -rf "${ROOT_DIR}/CMakeFiles" 2>/dev/null || true

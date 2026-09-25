@@ -194,12 +194,15 @@ binder_install_runpath()
 
 
 ###########################################################
-# Checkout Required repos from AOSP
+# AOSP sources - unpacked from the AOSP source tarball
+#
+# CMake never fetches them: ./aosp-source.sh provision unpacks the tarball into
+# android/ and applies patches/. build-aidl-generator-tool.sh runs it.
 ###########################################################
-if (NOT EXISTS ${ANDROID_DIR})
-    execute_process(
-        COMMAND sh -c "${CMAKE_CURRENT_LIST_DIR}/clone-android-binder-repo.sh"
-    )
+if (NOT EXISTS ${ANDROID_DIR}/native)
+    message(FATAL_ERROR
+        "AOSP sources not found in ${ANDROID_DIR}. "
+        "Run ${CMAKE_CURRENT_LIST_DIR}/aosp-source.sh provision first.")
 endif()
 
 

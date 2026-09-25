@@ -29,7 +29,6 @@
 #
 # Does NOT contain:
 #   - TAG / REPOSITORIES
-#   - clone_android_binder_repo()
 #   - build_linux_binder()
 #   - any script-specific logic
 # ==============================================================================
