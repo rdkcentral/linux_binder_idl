@@ -7,15 +7,15 @@ out/
 - **Major outputs:**
   - `out/target/`: Binder runtime libraries (e.g., `libbinder.so`, `servicemanager`) for ARM/embedded
   - `out/host/`: AIDL compiler tools (`aidl`, `aidl-cpp`) for x86_64 build host
-- **AIDL codegen is *offline only*:** Architecture team generates C++ from `.aidl` using host tools, commits generated code. *Production builds never run codegen or ship host tools.*
+- **AIDL codegen runs on the build host:** `aidl` is a host tool and no target image carries it. A consumer either generates C++ once and commits it, or generates it during its own build (as `build-binder-example.sh` does). The SDK supports both.
 - **Two-phase build design:** Core SDK (Android libs + servicemanager) is built once; AIDL compiler reuses these libs instead of rebuilding them.
 - **Source management:** AOSP sources in `android/` cloned by `clone-android-binder-repo.sh`, patched via `patches/*.patch` - **never manually edit `android/` contents**.
 
 ## Build & Workflow Patterns
 
-### Developer/Architecture Team (Wrapper Scripts)
+### Developer Builds (Wrapper Scripts)
 
-- `build-linux-binder-aidl.sh`: Build target runtime (bitness follows the toolchain; override with `TARGET_LIB32_VERSION`)
+- `build-linux-binder-aidl.sh`: Build target runtime (bitness follows the toolchain; assert it with `TARGET_BITNESS`)
   - Also builds host AIDL by default; use `no-host-aidl` to skip if already available
   - Respects Yocto environment: `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`
   - Automatically passes these to CMake as `CMAKE_C_COMPILER`, `CMAKE_CXX_COMPILER`, `CMAKE_C_FLAGS`, etc.
@@ -32,18 +32,18 @@ cmake -S . -B build-target \
   -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
   -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
   -DBUILD_HOST_AIDL=OFF \
-  -DTARGET_LIB32_VERSION=ON \
+  -DBINDER_PROTOCOL=8 \
   -DCMAKE_INSTALL_PREFIX=/usr/local
 ```
 
-Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=ON` or `TARGET_LIB32_VERSION=ON`.
+Required variables: `BUILD_HOST_AIDL=OFF` and `BINDER_PROTOCOL=7|8`. The ELF class is not a switch — it comes from the compiler.
 
 ### AIDL Code Generation Workflow
 
-1. Architecture team builds AIDL compiler: `./build-aidl-generator-tool.sh`
+1. Build the AIDL compiler on the build host: `./build-aidl-generator-tool.sh`
 2. Generate C++ from `.aidl`: `cd example && ./generate_cpp.sh` (use `clean` to regenerate)
-3. Commit generated `.cpp`/`.h` files to `example/stable/generated/FWManager/`
-4. Production builds compile pre-generated C++ only (no runtime codegen)
+3. The example writes it to `example/stable/generated/FWManager/`, which is build output and not committed
+4. The target build compiles that C++; the compiler itself stays on the host
 
 ### API Versioning & Dependencies
 
@@ -61,9 +61,9 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 - **Separate build trees:** `build-host/` for AIDL compiler, `build-target/` for runtime libs (never mix)
 - **Build environment detection:** CMake auto-detects Yocto via `OECORE_*` environment variables (lines 145–150)
 - **AidlGenerator macro:** CMakeLists.txt defines macro for generating stubs/proxies (line 242+); used by examples but not production
-- **Default architecture:** follows the toolchain — both `TARGET_LIB32_VERSION` and `BINDER_IPC_32BIT` are
-  derived from the compiler's pointer size when undefined, so an unqualified build matches the compiler it
-  was given: 32-bit → protocol 7, 64-bit → protocol 8. An explicit `-D` value always wins
+- **Default architecture:** the ELF class follows the toolchain — `CMAKE_SIZEOF_VOID_P` alone, since no
+  switch adds `-m32`/`-m64`. `BINDER_PROTOCOL` defaults to **8 on every toolchain**, because bitness cannot
+  select the protocol; only a legacy platform states `-DBINDER_PROTOCOL=7`
 
 ### Source Code Management
 
@@ -76,7 +76,7 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 
 - `android/`: AOSP sources (aidl, core, native, libbase, logging, fmtlib, googletest) - cloned, never modified directly
 - `patches/*.patch`: Local changes to AOSP code, applied during `clone-android-binder-repo.sh`
-- `host/`: Python tooling for interface versioning (architecture team only)
+- `host/`: Python tooling for interface versioning (runs on the build host)
   - `aidl_ops.py`: Main CLI for update-api, freeze-api, generate-source operations
   - `aidl_interface.py`, `aidl_api.py`: Interface version management
   - `interface-update.py`: Batch interface updates
@@ -108,22 +108,24 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
   export CFLAGS="--sysroot=/path/to/sysroot -march=armv7-a"
   export CXXFLAGS="--sysroot=/path/to/sysroot -march=armv7-a"
   export LDFLAGS="--sysroot=/path/to/sysroot"
-  export TARGET_LIB32_VERSION=ON
+  export TARGET_BITNESS=32     # optional: assert the toolchain is 32-bit
   ./build-linux-binder-aidl.sh
   ```
 - **Direct CMake:** Pass compiler and flags explicitly (see Production/Yocto section above)
-- `TARGET_LIB32_VERSION=ON` for 32-bit ARM/i686 targets — the default when the toolchain is 32-bit
-- `TARGET_LIB64_VERSION=ON` for 64-bit aarch64/x86_64 targets — the default when the toolchain
-  is 64-bit; the declaration adds no `-m64`, so it must agree with `CC`/`CXX`
+- `TARGET_BITNESS=32|64` declares the target ELF class. It adds no `-m32`/`-m64` and cannot select
+  anything — it asserts, and the build stops if `CC`/`CXX` disagrees. Most builds omit it
   (`CMakeLists.txt`, `build-linux-binder-aidl.sh`)
-- Never set both 32-bit and 64-bit flags simultaneously
 - **Bitness and wire protocol are independent axes:**
-  - `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` select the ELF ABI — match to *userspace* architecture
-  - `BINDER_IPC_32BIT` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
-  - Both default from the toolchain's pointer size, not from each other; protocol 7 requires a 32-bit toolchain, and `-DBINDER_IPC_32BIT=ON` against a 64-bit compiler is rejected at configure time
+  - `TARGET_BITNESS` declares the ELF ABI — match to *userspace* architecture
+  - `BINDER_PROTOCOL` selects the wire protocol — match to the *kernel's* `CONFIG_ANDROID_BINDER_IPC_32BIT`
+  - The protocol does not follow bitness: it defaults to 8 on every toolchain, and protocol 7 additionally
+    requires a 32-bit toolchain, so `-DBINDER_PROTOCOL=7` against a 64-bit compiler is rejected at configure time
 - **32-bit userspace on 64-bit kernel:** Common in embedded systems for memory efficiency
-  - Build with `-DTARGET_LIB32_VERSION=ON -DBINDER_IPC_32BIT=OFF` (protocol 8)
-  - The `OFF` is not optional here — a 32-bit toolchain defaults to protocol 7, which a protocol-8 kernel refuses
+  - Build with `-DBINDER_PROTOCOL=8`, using a 32-bit cross-toolchain
+- **Deprecated switch spellings** (still honoured, so existing recipes keep working; never write them in new
+  code or docs): `BINDER_IPC_32BIT=ON|OFF` → `BINDER_PROTOCOL=7|8`, and `TARGET_LIB32_VERSION` /
+  `TARGET_LIB64_VERSION` → `TARGET_BITNESS=32|64`. `BINDER_IPC_32BIT` is *not* deprecated as the compile
+  define or as the kernel's Kconfig symbol — only as a build switch
 
 ## Testing & Validation
 
@@ -137,7 +139,7 @@ Required variables: `BUILD_HOST_AIDL=OFF`, and **one of** `TARGET_LIB64_VERSION=
 
 - **Never** build or ship host AIDL tools in production Yocto builds
 - **Never** use wrapper scripts in BitBake recipes (use direct CMake invocation)
-- **Never** use both `TARGET_LIB32_VERSION` and `TARGET_LIB64_VERSION` simultaneously
+- **Never** write a deprecated switch spelling in new code, recipes or documentation
 - **Never** allow `/usr/include` in compile commands (CMake explicitly disables this)
 - **Never** manually edit files in `android/` directory - use patches instead
 - **Always** commit AIDL-generated C++ to `stable/generated/`; never generate at production build time

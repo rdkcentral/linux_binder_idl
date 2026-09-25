@@ -63,7 +63,11 @@ mkdir -p "${STUB_BIN_DIR}"
 install -m 0755 "${STUB_M4_SRC}" "${STUB_BIN_DIR}/m4"
 STUB_M4="${STUB_BIN_DIR}/m4"
 
-# Each test gets its own out/build dirs so failures don't poison reruns.
+# Each test gets its own out/build dirs so failures don't poison reruns, and so
+# a run never depends on what a previous one left in the repo tree. These are
+# passed to the build script through HOST_BUILD_DIR/HOST_OUT_DIR by run_build —
+# declaring them without passing them is what made this test pass on a clean
+# checkout and fail on every run after it.
 TEST_OUT="${SCRATCH}/out"
 TEST_BUILD="${SCRATCH}/build-host"
 
@@ -86,7 +90,8 @@ run_build() {
   local extra_env="$1"  # extra exports applied in front of the build, e.g. "M4=/path/to/m4"
   local log_file="$2"
   # shellcheck disable=SC2086
-  env -i HOME="${HOME}" PATH="${PATH}" ${extra_env} \
+  env -i HOME="${HOME}" PATH="${PATH}" \
+      HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" ${extra_env} \
       bash "${BUILD_SCRIPT}" >"${log_file}" 2>&1
 }
 
@@ -113,13 +118,10 @@ test_build_with_broken_inherited_m4() {
   local log="${SCRATCH}/test1.log"
   rm -rf "${TEST_OUT}" "${TEST_BUILD}"
 
-  # Force the build script's BUILD_DIR/OUT_DIR onto the scratch dir
-  # without modifying the script. The script honours these env vars
-  # via ROOT_DIR (the repo root) — for an out-of-tree build we copy
-  # the script and override SCRIPT_DIR via running from scratch.
-  # Simpler: just cd to repo root and run with env M4 set; cleanup
-  # repo-root out/ and build-host/ via the test's trap.
+  # Build into the scratch dir, never the repo tree. The build script takes
+  # BUILD_DIR/OUT_DIR for exactly this.
   ( cd "${REPO_ROOT}" && \
+    HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" \
     M4="${STUB_M4}" bash "${BUILD_SCRIPT}" ) >"${log}" 2>&1 \
     && rc=0 || rc=$?
 
@@ -161,6 +163,7 @@ test_build_with_m4_not_on_path() {
   fi
 
   ( cd "${REPO_ROOT}" && \
+    HOST_BUILD_DIR="${TEST_BUILD}" HOST_OUT_DIR="${TEST_OUT}" \
     PATH="${stripped_bin}" bash "${BUILD_SCRIPT}" ) >"${log}" 2>&1 \
     && rc=0 || rc=$?
 

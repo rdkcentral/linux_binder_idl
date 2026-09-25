@@ -28,6 +28,7 @@ set -euo pipefail
 #   1.1   Clone Android sources
 #   2     Scripts exist and are executable
 #   2.5   Default CMake flags validation
+#   2.6   Protocol / bitness switch matrix
 #   3     Help flags work
 #   4     Clean operations
 #   5     Build host AIDL tools
@@ -38,6 +39,12 @@ set -euo pipefail
 #   10    Production build (minimal flags + install)
 #   11    SC Docker cross-compilation (RDK Kirkstone ARM)
 #   12    Incremental build
+#   13    Component test suite (tests/run-tests.sh)
+#   14    QEMU kernel matrix
+#
+# Everything runs by default, including the kernel matrix. --no-qemu and
+# --no-suite opt out; nothing opts in, because a suite whose important parts
+# are opt-in gets run without them.
 ###########################################################
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -69,6 +76,8 @@ usage() {
     echo "  --from ID    Start running at test ID (e.g., 3 or 6)"
     echo "  --to ID      Stop after test ID (inclusive)"
     echo "  --only IDs   Run only specified test IDs (comma-separated)"
+    echo "  --no-qemu    Skip the QEMU kernel matrix (test 14)"
+    echo "  --no-suite   Skip the component test suite (test 13)"
     echo "  --list       List available test IDs"
     echo "  --help       Show this help"
 }
@@ -129,7 +138,7 @@ check_warnings_errors() {
 # Test ID management and CLI
 ###########################################################
 
-TEST_IDS=("1" "1.1" "2" "2.5" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12")
+TEST_IDS=("1" "1.1" "2" "2.5" "2.6" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12" "13" "14")
 
 list_tests() {
     echo "Available tests:"
@@ -137,6 +146,7 @@ list_tests() {
     echo "  1.1   Clone Android sources"
     echo "  2     Scripts exist and are executable"
     echo "  2.5   Default CMake flags validation"
+    echo "  2.6   Protocol / bitness switch matrix"
     echo "  3     Help flags work"
     echo "  4     Clean operations work and exit"
     echo "  5     Build host AIDL tools"
@@ -147,6 +157,8 @@ list_tests() {
     echo "  10    Production build (minimal flags + install)"
     echo "  11    SC Docker cross-compilation (RDK Kirkstone ARM toolchain)"
     echo "  12    Incremental build"
+    echo "  13    Component test suite (tests/run-tests.sh)"
+    echo "  14    QEMU kernel matrix (boots each kernel, real binder round-trip)"
 }
 
 index_of_test_id() {
@@ -289,6 +301,8 @@ check_install_layout() {
 START_INDEX=0
 END_INDEX=$((${#TEST_IDS[@]} - 1))
 ONLY_IDS=()
+SKIP_QEMU_MATRIX=0
+SKIP_COMPONENT_SUITE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -313,6 +327,12 @@ while [ $# -gt 0 ]; do
         --only)
             shift
             parse_only_ids "${1:-}"
+            ;;
+        --no-qemu)
+            SKIP_QEMU_MATRIX=1
+            ;;
+        --no-suite)
+            SKIP_COMPONENT_SUITE=1
             ;;
         --list)
             list_tests
@@ -416,16 +436,281 @@ test_2_5() {
             print_fail "Default CMAKE_BUILD_TYPE is not Release"
         fi
 
-        if grep -q "^BUILD_HOST_AIDL:BOOL=ON$" ./build-default-cmake/CMakeCache.txt; then
-            print_pass "Default BUILD_HOST_AIDL is ON"
+        # OFF by default: a production build takes the target runtime libraries
+        # only, and never pays for the host AIDL compiler it does not use.
+        if grep -q "^BUILD_HOST_AIDL:BOOL=OFF$" ./build-default-cmake/CMakeCache.txt; then
+            print_pass "Default BUILD_HOST_AIDL is OFF"
         else
-            print_fail "Default BUILD_HOST_AIDL is not ON"
+            print_fail "Default BUILD_HOST_AIDL is not OFF"
         fi
     else
         print_fail "Default CMake configure failed"
         tail -20 /tmp/default_config.log | tee -a "${TEST_LOG}"
     fi
     rm -rf ./build-default-cmake 2>/dev/null || true
+}
+
+# Configure only, into a scratch dir, with the given switches.
+probe_switches() {
+    local dir="$1"
+    shift
+    rm -rf "${dir}" 2>/dev/null || true
+    cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
+}
+
+# The same, but REUSING the build directory - which is the whole point when the
+# question is what a second configure inherits from the first through the cache.
+reconfigure_switches() {
+    local dir="$1"
+    shift
+    cmake -S . -B "${dir}" "$@" >/tmp/switch_config.log 2>&1
+}
+
+# Assert on what configure resolved to rather than on cache entries: these
+# switches are plain variables, so -D leaves them typed UNINITIALIZED and the
+# defaulted case leaves no cache entry at all. The messages are the contract.
+configure_selected() {
+    grep -q "Building $1 binder library" /tmp/switch_config.log \
+        && grep -q "binder wire protocol: $2" /tmp/switch_config.log
+}
+
+# The three platform configurations of PROTOCOL.md, plus the combinations the
+# library refuses. Bitness follows the toolchain; the protocol follows the
+# kernel, so a build spec states both and never inherits one of them.
+test_2_6() {
+    echo "Validating the binder protocol / bitness switch matrix..."
+    local d=./build-switch-matrix
+
+    # Row C - 64-bit userspace, protocol 8. The native toolchain here is 64-bit.
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DBINDER_PROTOCOL=8 \
+        && configure_selected 64bit 8; then
+        print_pass "Row C (BITNESS=64 + PROTOCOL=8) configures at protocol 8"
+    else
+        print_fail "Row C (BITNESS=64 + PROTOCOL=8) did not configure"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
+    # Protocol 7 carries 32-bit wire fields, which cannot hold a 64-bit pointer.
+    # The kernel option is `depends on !64BIT` for the same reason, so a 64-bit
+    # toolchain at protocol 7 is refused rather than left to fail on the device.
+    if probe_switches "$d" -DBINDER_PROTOCOL=7; then
+        print_fail "PROTOCOL=7 with a 64-bit toolchain configured, and must not"
+    else
+        print_pass "PROTOCOL=7 with a 64-bit toolchain is refused at configure time"
+    fi
+
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DBINDER_PROTOCOL=7; then
+        print_fail "BITNESS=64 + PROTOCOL=7 configured, and must not"
+    else
+        print_pass "BITNESS=64 + PROTOCOL=7 is refused at configure time"
+    fi
+
+    if probe_switches "$d" -DTARGET_BITNESS=64 && configure_selected 64bit 8; then
+        print_pass "TARGET_BITNESS=64 declares a 64-bit target"
+    else
+        print_fail "TARGET_BITNESS=64 did not declare a 64-bit target"
+    fi
+    if probe_switches "$d" -DTARGET_BITNESS=32; then
+        print_fail "TARGET_BITNESS=32 accepted against a 64-bit toolchain"
+    else
+        print_pass "TARGET_BITNESS contradicting the toolchain is refused"
+    fi
+
+    # The deprecated spellings must keep working, because integrator recipes
+    # already use them. They are pinned here so they cannot drift: an alias that
+    # stops aliasing changes the protocol of every build that still passes the
+    # old name, silently and only on the device.
+    if probe_switches "$d" -DBINDER_IPC_32BIT=OFF && configure_selected 64bit 8; then
+        print_pass "deprecated BINDER_IPC_32BIT=OFF still selects protocol 8"
+    else
+        print_fail "deprecated BINDER_IPC_32BIT=OFF no longer selects protocol 8"
+    fi
+    if probe_switches "$d" -DTARGET_LIB64_VERSION=ON && configure_selected 64bit 8; then
+        print_pass "deprecated TARGET_LIB64_VERSION=ON still declares a 64-bit target"
+    else
+        print_fail "deprecated TARGET_LIB64_VERSION=ON no longer declares a 64-bit target"
+    fi
+    if probe_switches "$d" -DBINDER_IPC_32BIT=ON; then
+        print_fail "deprecated BINDER_IPC_32BIT=ON accepted against a 64-bit toolchain"
+    else
+        print_pass "deprecated BINDER_IPC_32BIT=ON is refused against a 64-bit toolchain"
+    fi
+    # A half-converted recipe carrying both names must stop, not pick one.
+    if probe_switches "$d" -DBINDER_PROTOCOL=8 -DBINDER_IPC_32BIT=ON; then
+        print_fail "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing was accepted"
+    else
+        print_pass "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing is refused"
+    fi
+    if probe_switches "$d" -DTARGET_LIB32_VERSION=ON -DTARGET_LIB64_VERSION=ON; then
+        print_fail "both deprecated bitness flags ON was accepted"
+    else
+        print_pass "both deprecated bitness flags ON is refused"
+    fi
+    # The bitness pair gets the same disagreement check as the protocol pair.
+    # Letting the new name silently win would build the opposite of what a
+    # half-converted recipe asked for.
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DTARGET_LIB32_VERSION=ON; then
+        print_fail "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing was accepted"
+    else
+        print_pass "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing is refused"
+    fi
+    if probe_switches "$d" -DTARGET_BITNESS=64 -DTARGET_LIB64_VERSION=ON \
+        && configure_selected 64bit 8; then
+        print_pass "TARGET_BITNESS and TARGET_LIB64_VERSION agreeing is accepted"
+    else
+        print_fail "TARGET_BITNESS and TARGET_LIB64_VERSION agreeing was refused"
+    fi
+
+    if probe_switches "$d" -DBINDER_PROTOCOL=9; then
+        print_fail "BINDER_PROTOCOL=9 was accepted; only 7 and 8 exist"
+    else
+        print_pass "BINDER_PROTOCOL=9 is refused rather than rounded to a protocol"
+    fi
+
+    # The same default on the native 64-bit toolchain, so #72 is pinned on both
+    # and not only where it changed.
+    if probe_switches "$d" && configure_selected 64bit 8; then
+        print_pass "A 64-bit toolchain defaults to protocol 8"
+    else
+        print_fail "A 64-bit toolchain does not default to protocol 8"
+        tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+    fi
+
+    # Rows A and B are 32-bit userspace, so they need a working -m32 toolchain.
+    # Probe the C++ compiler as well: the binder builds C++, and a host with
+    # 32-bit libc but no lib32stdc++ passes a C-only probe and then fails the
+    # rows with CMake errors instead of the documented skip.
+    local have_m32=0
+    local -a m32=()
+    if echo 'int main(void){return 0;}' | "${CC:-gcc}" -m32 -x c - -o /tmp/binder_m32_probe 2>/dev/null \
+       && echo '#include <string>
+int main(){ std::string s; return s.size(); }' | "${CXX:-g++}" -m32 -x c++ - -o /tmp/binder_m32_probe_cxx 2>/dev/null; then
+        have_m32=1
+        m32=(-DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32)
+    fi
+    rm -f /tmp/binder_m32_probe /tmp/binder_m32_probe_cxx 2>/dev/null || true
+
+    if [ "${have_m32}" = "1" ]; then
+
+        # Row A - legacy all-32-bit: a 32-bit kernel at 4.17 or older with
+        # CONFIG_ANDROID_BINDER_IPC_32BIT=y.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_BITNESS=32 -DBINDER_PROTOCOL=7 \
+            && configure_selected 32bit 7; then
+            print_pass "Row A (BITNESS=32 + PROTOCOL=7) configures at protocol 7"
+        else
+            print_fail "Row A (BITNESS=32 + PROTOCOL=7) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        # The deprecated spelling of row A, which is the one that inverts:
+        # BINDER_IPC_32BIT=ON is protocol 7. Pinned on a 32-bit toolchain
+        # because that is the only place protocol 7 can be reached at all.
+        if probe_switches "$d" "${m32[@]}" -DBINDER_IPC_32BIT=ON \
+            && configure_selected 32bit 7; then
+            print_pass "deprecated BINDER_IPC_32BIT=ON still selects protocol 7"
+        else
+            print_fail "deprecated BINDER_IPC_32BIT=ON no longer selects protocol 7"
+        fi
+
+        # Row B - 32-bit userspace on a protocol-8 kernel: every 32-bit kernel
+        # from 4.18, and 32-bit middleware on any 64-bit kernel.
+        if probe_switches "$d" "${m32[@]}" -DTARGET_BITNESS=32 -DBINDER_PROTOCOL=8 \
+            && configure_selected 32bit 8; then
+            print_pass "Row B (BITNESS=32 + PROTOCOL=8) configures at protocol 8"
+        else
+            print_fail "Row B (BITNESS=32 + PROTOCOL=8) did not configure"
+            tail -20 /tmp/switch_config.log | tee -a "${TEST_LOG}"
+        fi
+
+        if probe_switches "$d" "${m32[@]}" -DTARGET_LIB32_VERSION=ON \
+            && configure_selected 32bit 8; then
+            print_pass "deprecated TARGET_LIB32_VERSION=ON still declares a 32-bit target"
+        else
+            print_fail "deprecated TARGET_LIB32_VERSION=ON no longer declares a 32-bit target"
+        fi
+
+        # Protocol 8 is the default on every toolchain (#72). Bitness cannot
+        # select the protocol, so a toolchain-derived default had to be wrong
+        # somewhere; defaulting to 8 puts the silent answer where every
+        # supported platform already is, and leaves row A to state its switch.
+        if probe_switches "$d" "${m32[@]}" && configure_selected 32bit 8; then
+            print_pass "A 32-bit toolchain defaults to protocol 8 - the protocol, on every toolchain"
+        else
+            print_fail "A 32-bit toolchain no longer defaults to protocol 8; a legacy platform would now inherit the wrong protocol and the row A guidance is stale"
+        fi
+    else
+        print_info "No -m32 toolchain - skipping rows A and B (32-bit userspace)"
+    fi
+
+    # The wrapper has to enforce the same disagreement rule as CMake, because it
+    # clears the deprecated names from the cache before invoking CMake - so
+    # CMake's own guards can never fire on a wrapper build. Without these the
+    # wrapper would silently accept what direct CMake rejects.
+    #
+    # --help exits before anything is built, so these cost a process each.
+    wrapper_refuses() {   # <description> <VAR=VAL> ...
+        local what="$1"; shift
+        if env "$@" ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_fail "wrapper accepted ${what}, but CMake refuses it"
+        else
+            print_pass "wrapper refuses ${what}"
+        fi
+    }
+    wrapper_accepts() {   # <description> <VAR=VAL> ...
+        local what="$1"; shift
+        if env "$@" ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_pass "wrapper accepts ${what}"
+        else
+            print_fail "wrapper refused ${what}, which is a valid combination"
+        fi
+    }
+    wrapper_refuses "BINDER_PROTOCOL and BINDER_IPC_32BIT disagreeing" \
+        BINDER_PROTOCOL=8 BINDER_IPC_32BIT=ON
+    wrapper_refuses "TARGET_BITNESS and TARGET_LIB32_VERSION disagreeing" \
+        TARGET_BITNESS=64 TARGET_LIB32_VERSION=ON
+    wrapper_refuses "both deprecated bitness flags ON" \
+        TARGET_LIB32_VERSION=ON TARGET_LIB64_VERSION=ON
+    wrapper_refuses "a non-boolean BINDER_IPC_32BIT" BINDER_IPC_32BIT=yes
+    wrapper_refuses "an out-of-range BINDER_PROTOCOL" BINDER_PROTOCOL=9
+    wrapper_accepts "the two protocol spellings agreeing" \
+        BINDER_PROTOCOL=8 BINDER_IPC_32BIT=OFF
+    wrapper_accepts "the two bitness spellings agreeing" \
+        TARGET_BITNESS=64 TARGET_LIB64_VERSION=ON
+
+    # A reused build directory keeps a protocol passed on an earlier configure,
+    # because -D writes a cache entry and the default only applies when nothing
+    # is cached. Ordinary CMake behaviour, but the result here builds, links and
+    # then kills every binder process on a protocol-8 device - so pin both that
+    # it happens (documented in BUILD.md) and that it is announced rather than
+    # silent, and that the wrapper clears it.
+    local reuse=./build-switch-reuse
+    rm -rf "${reuse}" 2>/dev/null || true
+    if [ "${have_m32}" = "1" ] \
+       && probe_switches "${reuse}" "${m32[@]}" -DBINDER_PROTOCOL=7 \
+       && configure_selected 32bit 7; then
+        if reconfigure_switches "${reuse}" "${m32[@]}" && configure_selected 32bit 7; then
+            print_pass "a reused build dir keeps protocol 7 (cache), as BUILD.md states"
+            if grep -q "Building the LEGACY binder wire protocol 7" /tmp/switch_config.log; then
+                print_pass "and says so, naming the cache as a possible source"
+            else
+                print_fail "and does NOT say so - a stale protocol 7 would be silent"
+            fi
+        else
+            print_fail "a reused build dir did not keep protocol 7; BUILD.md's cache warning is now wrong"
+        fi
+        # The wrapper clears the entry, which is why it is the safe path.
+        if env BUILD_DIR="$(pwd)/${reuse}" OUT_DIR="$(pwd)/${reuse}/out" \
+               ./build-linux-binder-aidl.sh --help >/dev/null 2>&1; then
+            print_pass "the wrapper clears the deprecated cache entries on every run"
+        else
+            print_fail "the wrapper failed against a reused build dir"
+        fi
+    else
+        print_info "No -m32 toolchain - skipping the reused-build-dir cache check"
+    fi
+    rm -rf "${reuse}" 2>/dev/null || true
+
+    rm -rf "$d" 2>/dev/null || true
 }
 
 test_3() {
@@ -553,7 +838,7 @@ test_8() {
     if run_cmake_build build-target-cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_HOST_AIDL=OFF \
-        -DTARGET_LIB64_VERSION=ON; then
+        -DBINDER_PROTOCOL=8; then
         check_warnings_errors /tmp/cmake_target_build.log "Direct CMake build (BUILD.md)"
         check_file_exists "./build-target-cmake/libbinder.so" "libbinder.so (CMake build)"
     else
@@ -570,7 +855,7 @@ test_9() {
     if run_cmake_build build-target-cmake \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_HOST_AIDL=OFF \
-        -DTARGET_LIB64_VERSION=ON && \
+        -DBINDER_PROTOCOL=8 && \
        run_cmake_install build-target-cmake; then
         check_warnings_errors /tmp/cmake_target_build.log "Direct CMake build + install"
         check_file_exists "./build-target-cmake/libbinder.so" "libbinder.so (CMake build)"
@@ -632,6 +917,15 @@ test_11() {
         return 0
     fi
 
+    # The image has to be present locally. Without a registry login `sc docker
+    # run` can only use --local, so check for the image and say which it is
+    # rather than failing inside docker with a registry warning.
+    if ! sc docker list 2>/dev/null | grep -q "rdk-kirkstone"; then
+        print_info "rdk-kirkstone image not available locally - skipping cross-compilation test"
+        print_info "  pull it, or 'sc docker login' for a remote registry"
+        return 0
+    fi
+
     clean_build_state
     echo "Building with RDK Kirkstone ARM toolchain via sc docker..."
     echo "This tests cross-compilation with sysroot and ARM target flags."
@@ -639,9 +933,12 @@ test_11() {
     # Build in SC Docker with ARM toolchain environment.
     # Skip host AIDL tool build (no-host-aidl) — host tools must be built
     # natively outside Docker, not inside the cross-compilation environment.
-    if sc docker run rdk-kirkstone \
+    # --local: without a registry login `sc docker run` can only use a local
+    # image, and omitting it fails with a registry warning rather than a build
+    # error. rdk-halif-aidl's equivalent tests pass it for the same reason.
+    if sc docker run --local rdk-kirkstone \
         ". /opt/toolchains/rdk-glibc-x86_64-arm-toolchain/environment-setup-armv7vet2hf-neon-oe-linux-gnueabi && \
-        export TARGET_LIB32_VERSION=ON && \
+        export TARGET_BITNESS=32 && \
         ./build-linux-binder-aidl.sh no-host-aidl" \
         >/tmp/docker_cross_build.log 2>&1; then
         print_pass "SC Docker cross-compilation completed"
@@ -712,6 +1009,85 @@ test_12() {
     fi
 }
 
+test_13() {
+    if [ "${SKIP_COMPONENT_SUITE}" = "1" ]; then
+        print_info "skipped by --no-suite"
+        return 0
+    fi
+    echo "Running the component test suite (kernel matrix runs separately as test 14)..."
+    # SKIP_QEMU=1: test 14 owns the matrix, so that a missing kernel is a
+    # failure there rather than a silent skip here.
+    if SKIP_QEMU=1 ./tests/run-tests.sh; then
+        print_pass "component test suite"
+    else
+        print_fail "component test suite"
+    fi
+}
+
+test_14() {
+    if [ "${SKIP_QEMU_MATRIX}" = "1" ]; then
+        print_info "skipped by --no-qemu"
+        return 0
+    fi
+    echo "Booting the QEMU kernel matrix..."
+    local log=/tmp/qemu_matrix.log
+    # `set -e` is on, so the exit status has to be captured in a context that
+    # tolerates failure. Run it bare and a failed boot aborts the whole suite
+    # here, before any of the diagnostics below are printed.
+    local rc=0
+    ./tests/qemu/run-qemu-test.sh >"${log}" 2>&1 || rc=$?
+    sed -n 's/^  \(PASS\|FAIL\|SKIP\)  /  \1  /p' "${log}"
+
+    # A skip here is a FAILURE. The matrix is the only thing that proves the
+    # built library talks to a kernel, and it skips itself when the kernels are
+    # absent or qemu is not installed - so treating a skip as success would let
+    # a green run mean nothing was booted. --no-qemu is how you opt out on
+    # purpose; a missing prerequisite is not the same thing.
+    if grep -q '^  SKIP  qemu binder test' "${log}"; then
+        print_fail "QEMU matrix did not run: $(sed -n 's/^  SKIP  qemu binder test — //p' "${log}" | head -n 1)"
+        echo "         build the kernels with ./tests/qemu/build-kernels.sh,"
+        echo "         or pass --no-qemu to skip this deliberately."
+        return 0
+    fi
+    # `|| true` because grep returns 1 on no match, and under `set -euo pipefail`
+    # an assignment from a failed pipeline aborts the function - losing exactly
+    # the diagnostics below, in the case where the harness died early and
+    # produced no summary at all.
+    local summary; summary="$(grep -o 'qemu binder test: .*' "${log}" | head -n 1 || true)"
+
+    # The harness exits 0 when it booted nothing: a variant whose qemu binary,
+    # busybox or 32-bit toolchain is missing is skipped individually, and those
+    # skips never reach the top-level SKIP line checked above. A green run that
+    # booted no kernel is the same empty result as the whole-matrix skip, so
+    # read the counts rather than trusting rc alone.
+    #
+    # An individual skip is NOT a failure, though. The 32-bit rows need
+    # tests/install.sh --with-32bit, which is optional by design, so failing on
+    # any skip would make the documented default setup red. They are reported
+    # instead, because a skipped variant is a pairing nothing proved.
+    local booted skipped
+    booted="$(sed -n 's/.*qemu binder test: \([0-9]*\) passed.*/\1/p' "${log}" | head -n 1 || true)"
+    skipped="$(sed -n 's/.*qemu binder test: .* \([0-9]*\) skipped.*/\1/p' "${log}" | head -n 1 || true)"
+
+    if [ "${rc}" -ne 0 ]; then
+        print_fail "QEMU kernel matrix: ${summary:-no summary - the harness died early}"
+        tail -20 "${log}" | sed 's/^/        /'
+    elif [ "${booted:-0}" -eq 0 ]; then
+        print_fail "QEMU kernel matrix booted nothing: ${summary:-no summary}"
+        echo "         every variant skipped its prerequisites — install the missing"
+        echo "         qemu-system-* binaries and run ./tests/qemu/build-kernels.sh,"
+        echo "         or pass --no-qemu to skip this deliberately."
+        tail -20 "${log}" | sed 's/^/        /'
+    else
+        print_pass "QEMU kernel matrix: ${summary}"
+        if [ "${skipped:-0}" -ne 0 ]; then
+            print_info "${skipped} matrix variant(s) skipped - pairings nothing proved:"
+            sed -n 's/^  SKIP  /         SKIP  /p' "${log}"
+            echo "         tests/install.sh --with-32bit adds the 32-bit rows."
+        fi
+    fi
+}
+
 ###########################################################
 # Run tests
 ###########################################################
@@ -720,6 +1096,7 @@ run_test "1" "Clean Android sources" test_1
 run_test "1.1" "Clone Android sources" test_1_1
 run_test "2" "Scripts exist and are executable" test_2
 run_test "2.5" "Default CMake flags validation" test_2_5
+run_test "2.6" "Protocol / bitness switch matrix" test_2_6
 run_test "3" "Help flags work" test_3
 run_test "4" "Clean operations work and exit" test_4
 run_test "5" "Build host AIDL tools" test_5
@@ -730,6 +1107,8 @@ run_test "9" "Direct CMake build (per BUILD.md + install)" test_9
 run_test "10" "Production build (minimal flags + install)" test_10
 run_test "11" "SC Docker cross-compilation (RDK Kirkstone ARM)" test_11
 run_test "12" "Incremental build" test_12
+run_test "13" "Component test suite (tests/run-tests.sh)" test_13
+run_test "14" "QEMU kernel matrix" test_14
 
 ###########################################################
 # Summary
