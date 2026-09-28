@@ -90,7 +90,13 @@ EXTRA_OECMAKE += " \
 # from ${D} rather than packaging an empty one.
 do_configure:prepend() {
     unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+    ${S}/clone-android-binder-repo.sh
 }
+
+# The AOSP sources: clone-android-binder-repo.sh clones the pinned AOSP
+# repositories into ${S}/android and applies patches/. It runs in do_configure,
+# and Kirkstone gives network access only to do_fetch unless a task asks for it.
+do_configure[network] = "1"
 
 do_install:append() {
     for f in ${libdir}/libbinder.so ${bindir}/servicemanager ${includedir}/binder/IBinder.h; do
