@@ -28,6 +28,7 @@ out/
 - Ubuntu 22.04 LTS (or similar)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (GCC 9.4.0 minimum)
+- For AIDL code generation: Python 3 with PyYAML (`python3-yaml`)
 - For cross-compilation: ARM toolchain (e.g., `arm-linux-gnueabihf-gcc`)
 
 ## Building Host Tools
