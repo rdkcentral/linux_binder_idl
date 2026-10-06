@@ -445,12 +445,17 @@ set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/inclu
 
 if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
     file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
-         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
+    # cmake -E create_symlink rather than the CREATE_LINK sub-command of file(),
+    # which needs CMake 3.14; this project's floor is 3.8.
+    foreach(_hdr linux asm asm-generic)
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${_SYSROOT_INCLUDE}/${_hdr}" "${ANDROID_KERNEL_HEADERS_DIR}/${_hdr}"
+            RESULT_VARIABLE _link_result)
+        if (NOT _link_result EQUAL 0)
+            message(FATAL_ERROR "could not stage ${_SYSROOT_INCLUDE}/${_hdr} into ${ANDROID_KERNEL_HEADERS_DIR}")
+        endif()
+    endforeach()
 endif()
 
 # Prioritize project kernel headers over system /usr/include/linux/
