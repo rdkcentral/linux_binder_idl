@@ -156,10 +156,13 @@ fi
 # 5. The binder source clone is explicit and allowed network access. CMake would run
 #    the same script if android/ were missing, but inside do_configure, where
 #    Kirkstone - the release every RDK platform uses - blocks the network.
-if printf '%s\n' "${ACTIVE}" | grep -qF '${S}/clone-android-binder-repo.sh'; then
-    pass "do_configure runs clone-android-binder-repo.sh explicitly"
+#    The call must be inside do_configure:prepend - the task that is granted the
+#    network - so only that function's body is searched, not the whole recipe.
+CONFIGURE_PREPEND="$(printf '%s\n' "${ACTIVE}" | awk '/^do_configure:prepend\(\) *\{/ {f=1; next} f && /^\}/ {exit} f')"
+if printf '%s\n' "${CONFIGURE_PREPEND}" | grep -qF '${S}/clone-android-binder-repo.sh'; then
+    pass "do_configure:prepend runs clone-android-binder-repo.sh explicitly"
 else
-    fail "the recipe does not run clone-android-binder-repo.sh - the binder source clone is hidden inside CMake"
+    fail "do_configure:prepend does not run clone-android-binder-repo.sh - the binder source clone is hidden inside CMake, or runs in a task without network access"
 fi
 if printf '%s\n' "${ACTIVE}" | grep -qE '^do_configure\[network\] = "1"'; then
     pass "do_configure[network] = \"1\", so the clone works on Kirkstone"
