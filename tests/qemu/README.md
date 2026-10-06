@@ -23,6 +23,39 @@ The guest first reports the security modules the kernel is running
 A single sentinel line is emitted and parsed by the host runner:
 `QEMU_BINDER_RESULT: PASS …` / `FAIL …`.
 
+## The passes each kernel gets
+
+Each kernel is booted several times, once per userspace below. Every pass
+starts `servicemanager` and goes through it, on an AppArmor-only kernel
+([Security module](#security-module)).
+
+| Pass (label suffix) | Kernels | Userspace | What it proves | Expected |
+| --- | --- | --- | --- | --- |
+| explicit (none) | all | built with `BINDER_PROTOCOL` and `TARGET_BITNESS` set to the kernel's | this kernel and this protocol interoperate | PASS |
+| `[derived]` | all | built with neither switch, so the build picks the protocol itself | the default (protocol 8) reaches a real build and matches the kernel | PASS |
+| `[derived] [expected mismatch]` | protocol 7 (`-ipc32`) | built with neither switch | the default is deliberately wrong on a legacy kernel, and the boot fails with the driver's `protocol(7) does not match user space protocol(8)` rather than shipping | PASS when that message appears |
+| `[32-bit userspace]` | x86_64 | i386 build | the binder driver's compat path — 32-bit processes on a 64-bit kernel | PASS |
+| `[server64-client32]`, `[server32-client64]` | x86_64 | one 64-bit and one 32-bit process | a call and its reply crossing between ELF classes, both directions | PASS |
+
+The 32-bit and mixed passes need a 32-bit busybox, which `build-kernels.sh`
+stages beside every i386 kernel; without an i386 kernel in the same run they
+skip.
+
+At the end the runner prints the matrix:
+
+| Column | Meaning |
+| --- | --- |
+| `KERNEL` | the kernel's label (`<version>[-i386\|-ipc32]`) |
+| `GUEST` | the QEMU guest architecture |
+| `SERVES` | the binder protocol the kernel serves |
+| `USERSPACE` | the userspace under test, as in the table above |
+| `SWITCHES` | `explicit` or `derived` |
+| `DERIVED` | the protocol a derived build chose |
+| `RESULT` | `PASS`, `FAIL` with the reason, or `SKIP` with the missing tool |
+
+A row also fails as `FAIL (wrong LSM)` when the guest does not report AppArmor
+active and SELinux absent.
+
 ## Usage
 
 ```bash
