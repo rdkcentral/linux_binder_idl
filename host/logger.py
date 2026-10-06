@@ -18,8 +18,8 @@
 # * SPDX-License-Identifier: Apache-2.0
 # */
 
-# Logging for the host toolchain, on the standard library alone: the toolchain
-# needs nothing but a bare Python 3.
+# Logging for the host toolchain, on the standard library alone, and on Python
+# 3.6 or later: no third-party package and no stdlib feature newer than 3.6.
 #
 # Records go to stderr as
 #     date time [LEVEL   ] tag  function():line message
@@ -30,7 +30,7 @@ import logging
 import os
 import sys
 
-_FORMAT = "%(asctime)s\t[%(levelname)-8s] %(name)s  %(funcName)s():%(lineno)d %(message)s"
+_FORMAT = "%(asctime)s\t[%(levelname)-8s] %(name)s  %(caller_func)s():%(caller_line)d %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _RED = "\033[31m"
@@ -58,16 +58,15 @@ class Logger:
 
     def __init__(self, log_tag=None, log_level=None):
         self._log_level = self.INFO if log_level is None else log_level
-        self._logger = logging.getLogger("default" if log_tag is None else log_tag)
-        # Filtering is per instance, by _log_level; the stdlib logger passes
-        # everything, since instances sharing a tag share it.
-        self._logger.setLevel(1)
-        self._logger.propagate = False
-        if not self._logger.handlers:
-            handler = logging.StreamHandler(sys.stderr)
-            colour = sys.stderr.isatty() and "NO_COLOR" not in os.environ
-            handler.setFormatter(_Formatter(colour))
-            self._logger.addHandler(handler)
+        # A standalone stdlib logger per instance, never one from
+        # logging.getLogger(): that registry is process-wide, and getLogger("")
+        # is the root logger - configuring it would change logging for the
+        # whole process. Filtering is done here, by _log_level.
+        self._logger = logging.Logger("default" if log_tag is None else log_tag, 1)
+        handler = logging.StreamHandler(sys.stderr)
+        colour = sys.stderr.isatty() and "NO_COLOR" not in os.environ
+        handler.setFormatter(_Formatter(colour))
+        self._logger.addHandler(handler)
 
     def fatal(self, msg):
         self._log(self.FATAL, msg)
@@ -92,15 +91,18 @@ class Logger:
         if level > self._log_level:
             return
         stdlib_level, name, colour = self._LEVELS.get(level, self._LEVELS[self.VERBOSE])
-        # stacklevel=3 attributes the record to whoever called fatal()/error()/...
-        # rather than to this method or the public wrapper.
-        self._logger.log(stdlib_level, msg, stacklevel=3,
-                         extra={"logger_name": name, "logger_colour": colour})
+        # The caller of fatal()/error()/...: two frames up from here. Passed as
+        # extra fields, since logging's own stacklevel needs Python 3.8.
+        caller = sys._getframe(2)
+        self._logger.log(stdlib_level, msg,
+                         extra={"logger_name": name, "logger_colour": colour,
+                                "caller_func": caller.f_code.co_name,
+                                "caller_line": caller.f_lineno})
 
 
 class _Formatter(logging.Formatter):
     def __init__(self, colour):
-        super().__init__(_FORMAT, _DATE_FORMAT)
+        super(_Formatter, self).__init__(_FORMAT, _DATE_FORMAT)
         self._colour = colour
 
     def format(self, record):

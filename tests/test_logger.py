@@ -50,14 +50,14 @@ worker()
 
 def run(*flags):
     return subprocess.run([sys.executable, "-S", *flags, "-c", SCRIPT],
-                          capture_output=True, text=True)
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
 
 class LoggerTest(unittest.TestCase):
     def test_logger_imports_without_site_packages(self):
         r = subprocess.run(
             [sys.executable, "-S", "-c", "import sys; sys.path.insert(0, %r); import logger" % HOST],
-            capture_output=True, text=True)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_host_scripts_import_without_colorama(self):
@@ -70,7 +70,7 @@ class LoggerTest(unittest.TestCase):
                 [sys.executable, "-c",
                  "import sys; sys.modules['colorama'] = None; "
                  "sys.path.insert(0, %r); import %s" % (HOST, module)],
-                capture_output=True, text=True)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             self.assertEqual(r.returncode, 0, "%s: %s" % (module, r.stderr))
 
     def test_records_go_to_stderr_only(self):
@@ -93,6 +93,22 @@ class LoggerTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("fatal line", r.stderr)
         self.assertNotIn("after fatal", r.stdout)
+
+    def test_empty_tag_leaves_the_root_logger_alone(self):
+        r = subprocess.run(
+            [sys.executable, "-S", "-c",
+             "import sys, logging; sys.path.insert(0, %r)\n"
+             "from logger import Logger\n"
+             "root = logging.getLogger()\n"
+             "before = (root.level, list(root.handlers))\n"
+             "Logger('', Logger.INFO).info('tagless')\n"
+             "assert (root.level, list(root.handlers)) == before, 'root logger changed'\n"
+             "logging.getLogger('other').debug('must not appear')\n" % HOST],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("tagless", r.stderr)
+        self.assertNotIn("must not appear", r.stderr)
+        self.assertNotIn("] root ", r.stderr)
 
     def test_fatal_exits_non_zero_under_optimisation(self):
         r = run("-O")
