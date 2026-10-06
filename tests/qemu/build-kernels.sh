@@ -47,6 +47,7 @@ IPC32_FRAGMENT="${HERE}/kconfig/binder-ipc32.fragment"
 IPC32OFF_FRAGMENT="${HERE}/kconfig/binder-ipc32-off.fragment"
 IPC32_PROMPT_PATCH="${HERE}/patches/linux-4.9-binder-ipc32-prompt.patch"
 LSM_APPARMOR_FRAGMENT="${HERE}/kconfig/lsm-apparmor.fragment"
+BUSYBOX_STATIC_FRAGMENT="${HERE}/kconfig/busybox-static.fragment"
 
 # Default matrix — one stable point release per minor across the supported
 # range (4.9 floor → 5.16), plus both 32-bit kernels at the 4.9 floor. Suffixes
@@ -201,6 +202,7 @@ BR2_LINUX_KERNEL_DEFCONFIG="${arch}"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="${frags}"
 BR2_LINUX_KERNEL_BZIMAGE=y
 BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="${BUSYBOX_STATIC_FRAGMENT}"
 ${kpatch_line}
 EOF
     if ! br_make O="${o}" defconfig BR2_DEFCONFIG="${o}.config" >/dev/null 2>&1; then
@@ -248,9 +250,16 @@ EOF
 
     # A non-native guest needs its own busybox; Buildroot already has a
     # matching toolchain here, so take it from the same output tree.
+    # It is linked statically (busybox-static.fragment), so it runs whatever libc
+    # the runner stages beside it; rebuilt every time, since Buildroot would
+    # otherwise keep a dynamic one built before the fragment existed.
     if [ "${arch}" != "x86_64" ]; then
+        br_make O="${o}" busybox-dirclean >/dev/null 2>&1 || true
         if br_make O="${o}" busybox >>"${o}.build.log" 2>&1 \
            && [ -x "${o}/target/bin/busybox" ]; then
+            if file -L "${o}/target/bin/busybox" 2>/dev/null | grep -q 'dynamically linked'; then
+                echo "  WARN  ${label}: busybox is dynamically linked — the guest shell may not start on this host"
+            fi
             cp "${o}/target/bin/busybox" "${dest}/busybox"
         else
             echo "  WARN  ${label}: no ${arch} busybox built — run-qemu-test.sh will skip this variant"
