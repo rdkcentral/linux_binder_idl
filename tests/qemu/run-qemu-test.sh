@@ -48,7 +48,7 @@ KERNEL_DIR="${HERE}/kernels"
 # QEMU pins every kernel to one binary.
 QEMU="${QEMU:-}"
 KEEP=false
-EXPECT_LSM=default
+EXPECT_LSM=apparmor
 KERNEL_ARG=""
 TIMEOUT="${QEMU_TIMEOUT:-90}"
 
@@ -383,11 +383,13 @@ prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
 }
 
 # Does the guest's reported security-module list match the kernel's variant?
-# default (a kernel built before lsm= was recorded): not checked. apparmor:
-# AppArmor active, SELinux not.
+# apparmor: AppArmor active, SELinux not. A kernel with no lsm= recorded is
+# held to apparmor too, so an old cached SELinux kernel cannot pass unchecked;
+# lsm=any in a kernel's variant file is the explicit opt-out for one brought in
+# deliberately with another security module.
 lsm_matches() {   # <expected> <log>
     local want="$1" got
-    [ "${want}" = "default" ] && return 0
+    [ "${want}" = "any" ] && return 0
     got="$(sed -n 's/.*QEMU_BINDER_LSM: //p' "$2" | head -n 1 | tr -d '\r')"
     [ -n "${got}" ] || return 1
     case "${want}" in
@@ -460,7 +462,7 @@ for kimg in "${KERNELS_LIST[@]}"; do
     label="$(basename "${kdir}")"
     arch="$(variant_field "${kdir}" arch x86_64)"
     proto="$(variant_field "${kdir}" protocol 8)"
-    EXPECT_LSM="$(variant_field "${kdir}" lsm default)"
+    EXPECT_LSM="$(variant_field "${kdir}" lsm apparmor)"
 
     # A non-native guest ships its own busybox next to the bzImage.
     bb="${kdir}/busybox"; [ -x "${bb}" ] || bb="${BUSYBOX}"

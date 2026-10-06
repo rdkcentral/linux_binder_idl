@@ -30,7 +30,8 @@
 # Linux build sees it (the flag must be absent) and as Android sees it (the
 # flag must still be there).
 #
-# Skips cleanly (exit 0) when git, curl/base64 or a compiler is unavailable.
+# Skips cleanly (exit 0) when git or a compiler is unavailable, or when there is
+# neither a local binder source clone nor curl/base64 to fetch the file.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
@@ -45,7 +46,6 @@ FAILED=0
 
 command -v "${CXX}" >/dev/null 2>&1 || skip "${CXX} not installed"
 command -v git >/dev/null 2>&1 || skip "git not available"
-command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 || skip "curl or base64 not available"
 
 TAG="$(grep -oE 'android-[0-9.]+_r[0-9]+' "${ROOT}/clone-android-binder-repo.sh" | head -1)"
 [ -n "${TAG}" ] || skip "no AOSP tag in clone-android-binder-repo.sh"
@@ -54,11 +54,24 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/secctx.XXXXXX")"
 trap 'rm -rf "${WORK}"' EXIT
 mkdir -p "${WORK}/libs/binder"
 
-# googlesource ?format=TEXT returns the file base64-encoded.
-url="https://android.googlesource.com/platform/frameworks/native/+/refs/tags/${TAG}/libs/binder/ProcessState.cpp?format=TEXT"
-curl -fsSL "${url}" 2>/dev/null | base64 -d > "${WORK}/libs/binder/ProcessState.cpp" 2>/dev/null \
-    || skip "could not fetch ProcessState.cpp@${TAG}"
-[ -s "${WORK}/libs/binder/ProcessState.cpp" ] || skip "ProcessState.cpp@${TAG} is empty"
+# The unpatched upstream file: from the local binder source clone when there is
+# one (patches/ is applied to its working tree, so HEAD is still upstream), and
+# from googlesource otherwise, so an ordinary post-build run needs no network.
+NATIVE="${ROOT}/android/native"
+if git -C "${NATIVE}" show "HEAD:libs/binder/ProcessState.cpp" > "${WORK}/libs/binder/ProcessState.cpp" 2>/dev/null \
+   && [ -s "${WORK}/libs/binder/ProcessState.cpp" ]; then
+    SRC="the local clone (${NATIVE})"
+else
+    command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 \
+        || skip "no local binder source clone, and no curl/base64 to fetch ProcessState.cpp@${TAG}"
+    # googlesource ?format=TEXT returns the file base64-encoded.
+    url="https://android.googlesource.com/platform/frameworks/native/+/refs/tags/${TAG}/libs/binder/ProcessState.cpp?format=TEXT"
+    curl -fsSL "${url}" 2>/dev/null | base64 -d > "${WORK}/libs/binder/ProcessState.cpp" 2>/dev/null \
+        || skip "could not fetch ProcessState.cpp@${TAG}"
+    [ -s "${WORK}/libs/binder/ProcessState.cpp" ] || skip "ProcessState.cpp@${TAG} is empty"
+    SRC="googlesource@${TAG}"
+fi
+echo "  upstream ProcessState.cpp from ${SRC}"
 
 ( cd "${WORK}" && git init -q && git apply --include='libs/binder/ProcessState.cpp' "${PATCH}" ) \
     || { echo "  FAIL  native.patch does not apply to ProcessState.cpp@${TAG}"; exit 1; }

@@ -11,8 +11,8 @@ that varies.
 
 ## What it checks
 
-The guest first reports the security modules the kernel is running
-(`QEMU_BINDER_LSM: …`), then starts `servicemanager`. `binder_roundtrip`:
+The guest starts `servicemanager`, then reports the security modules the kernel
+is running (`QEMU_BINDER_LSM: …`). `binder_roundtrip`:
 
 1. Opens `/dev/binder` via `ProcessState` — libbinder's strict `BINDER_VERSION`
    check here catches a kernel/userspace **protocol mismatch** (the 7-vs-8 trap).
@@ -150,7 +150,9 @@ kept SELinux would supply every context and pass whatever userspace asks for:
    not show AppArmor active and SELinux absent.
 
 The kernel's `variant` file records `lsm=apparmor` next to `arch=` and
-`protocol=`.
+`protocol=`. A kernel without an `lsm=` record is held to AppArmor as well, so a
+cached kernel from before this check cannot pass unchecked; `lsm=any` is the
+explicit opt-out for a kernel deliberately brought in with another module.
 
 ## Extending to a HALIF interface
 

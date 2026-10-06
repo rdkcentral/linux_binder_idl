@@ -210,14 +210,16 @@ EOF
     fi
     # Buildroot will not reconfigure a kernel it has already built, so when this
     # output last built a different variant, discard the kernel tree first.
+    # The marker names the variant last built AND validated here; it is cleared
+    # now and rewritten only once the merged config passes every check below,
+    # so a kernel that fails validation is rebuilt rather than reused.
     if [ "$(cat "${o}.kernel-variant" 2>/dev/null)" != "${label}" ]; then
         br_make O="${o}" linux-dirclean >/dev/null 2>&1 || true
     fi
+    rm -f "${o}.kernel-variant"
     if ! br_make O="${o}" linux >"${o}.build.log" 2>&1; then
-        rm -f "${o}.kernel-variant"
         echo "  FAIL  ${label}: kernel build failed — see ${o}.build.log"; continue
     fi
-    echo "${label}" > "${o}.kernel-variant"
 
     # Verify the protocol actually landed. kconfig drops an unsatisfiable
     # symbol silently, so without this a mislabelled kernel builds "OK" and the
@@ -238,6 +240,7 @@ EOF
     if ! grep -q '^CONFIG_SECURITY_APPARMOR=y' "${kcfg}" || grep -q '^CONFIG_SECURITY_SELINUX=y' "${kcfg}"; then
         echo "  FAIL  ${label}: the merged config is not AppArmor-only (SELinux still set, or AppArmor missing)"; continue
     fi
+    echo "${label}" > "${o}.kernel-variant"
 
     img="$(find "${o}/images" -name 'bzImage' -type f 2>/dev/null | head -1)"
     if [ -z "${img}" ]; then echo "  FAIL  ${label}: no bzImage produced"; continue; fi
@@ -250,9 +253,10 @@ EOF
 
     # A non-native guest needs its own busybox; Buildroot already has a
     # matching toolchain here, so take it from the same output tree.
-    # It is linked statically (busybox-static.fragment), so it runs whatever libc
-    # the runner stages beside it; rebuilt every time, since Buildroot would
-    # otherwise keep a dynamic one built before the fragment existed.
+    # It is linked statically (busybox-static.fragment), which removes its
+    # dependency on the host libc the runner stages for the binder binaries;
+    # rebuilt every time, since Buildroot would otherwise keep a dynamic one
+    # built before the fragment existed.
     if [ "${arch}" != "x86_64" ]; then
         br_make O="${o}" busybox-dirclean >/dev/null 2>&1 || true
         if br_make O="${o}" busybox >>"${o}.build.log" 2>&1 \
