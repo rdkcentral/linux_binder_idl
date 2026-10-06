@@ -180,6 +180,10 @@ for spec in ${VERSIONS}; do
     fi
     frags="${frags} ${LSM_APPARMOR_FRAGMENT}"
 
+    # BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF builds Buildroot's own libelf for the
+    # kernel's objtool (x86 from 5.10 needs it), so the build does not depend on
+    # the build host having libelf-dev installed.
+    #
     # Buildroot defaults BR2_KERNEL_HEADERS_AS_KERNEL=y, taking the toolchain's
     # kernel headers from the custom kernel — then cross-checks them against the
     # selected header *series*, which defaults to the newest Buildroot knows.
@@ -196,6 +200,7 @@ BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="${ver}"
 BR2_LINUX_KERNEL_DEFCONFIG="${arch}"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="${frags}"
 BR2_LINUX_KERNEL_BZIMAGE=y
+BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
 ${kpatch_line}
 EOF
     if ! br_make O="${o}" defconfig BR2_DEFCONFIG="${o}.config" >/dev/null 2>&1; then
