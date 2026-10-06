@@ -257,9 +257,11 @@ do_configure:prepend() {
     ${S}/clone-android-binder-repo.sh
 }
 
-# The AOSP sources: clone-android-binder-repo.sh clones the pinned AOSP
-# repositories into ${S}/android and applies patches/. It runs in do_configure,
-# and Kirkstone gives network access only to do_fetch unless a task asks for it.
+# The binder sources: clone-android-binder-repo.sh fetches the specific
+# components linux_binder builds - libbinder, servicemanager and the support
+# libraries they need - at a pinned release into ${S}/android, and applies
+# patches/. It runs in do_configure, and Kirkstone gives network access only to
+# do_fetch unless a task asks for it.
 do_configure[network] = "1"
 
 do_install:append() {

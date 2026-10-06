@@ -31,7 +31,7 @@
 #      defconfig, which can request a symbol the kernel no longer has and have
 #      that request dropped in silence.
 #   3. CMake's own install rules run, so the package is not empty.
-#   4. It runs the AOSP clone explicitly, with the network access Kirkstone
+#   4. It runs the binder source clone explicitly, with the network access Kirkstone
 #      requires for it.
 #   5. BUILD.md's recipe block has not drifted from it. The doc inlines the
 #      recipe for readability, and two copies of one file is how they diverge.
@@ -153,13 +153,13 @@ else
     fail "do_install does not check that libbinder.so reached \${D}"
 fi
 
-# 5. The AOSP clone is explicit and allowed network access. CMake would run
+# 5. The binder source clone is explicit and allowed network access. CMake would run
 #    the same script if android/ were missing, but inside do_configure, where
 #    Kirkstone - the release every RDK platform uses - blocks the network.
 if printf '%s\n' "${ACTIVE}" | grep -qF '${S}/clone-android-binder-repo.sh'; then
     pass "do_configure runs clone-android-binder-repo.sh explicitly"
 else
-    fail "the recipe does not run clone-android-binder-repo.sh - the AOSP clone is hidden inside CMake"
+    fail "the recipe does not run clone-android-binder-repo.sh - the binder source clone is hidden inside CMake"
 fi
 if printf '%s\n' "${ACTIVE}" | grep -qE '^do_configure\[network\] = "1"'; then
     pass "do_configure[network] = \"1\", so the clone works on Kirkstone"
