@@ -11,7 +11,8 @@ that varies.
 
 ## What it checks
 
-Inside the guest, `binder_roundtrip`:
+The guest first reports the security modules the kernel is running
+(`QEMU_BINDER_LSM: …`), then starts `servicemanager`. `binder_roundtrip`:
 
 1. Opens `/dev/binder` via `ProcessState` — libbinder's strict `BINDER_VERSION`
    check here catches a kernel/userspace **protocol mismatch** (the 7-vs-8 trap).
@@ -63,7 +64,7 @@ images across them:
 The default list is `4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.4.290:i386
 5.10.205 5.15.148 5.16.20` — the supported range at one stable point release per
 minor, with 4.9 carried at **both** protocols and 5.4 carried as a 32-bit kernel
-as well.
+as well — every one of them AppArmor-only ([Security module](#security-module)).
 
 The middle row is the one most platforms run: a 32-bit userspace on a modern
 binder driver. At 4.18 and newer the symbol is gone and the plain fragment is
@@ -85,6 +86,39 @@ config came out with the option set. Each kernel directory carries a `variant` f
 (`arch=`, `protocol=`) that the runner uses to pick the QEMU binary and the
 matching userspace.
 
+## Security module
+
+Every kernel runs **AppArmor as its only security module, SELinux off**
+(`kconfig/lsm-apparmor.fragment`) — the configuration RDK platforms ship. The
+x86 defconfig would otherwise enable SELinux, which no RDK platform runs.
+
+The security module decides whether `servicemanager` can be reached at all. A
+context manager that registers with `FLAT_BINDER_FLAG_TXN_SECURITY_CTX` asks the
+kernel for every caller's security context, and the kernel refuses the
+transaction when the module cannot supply one. AppArmor cannot for an
+unconfined process, so on these kernels such a context manager is unreachable
+and every `addService` / `getService` fails
+([#90](https://github.com/rdkcentral/linux_binder_idl/issues/90)). SELinux
+supplies every context, which is how the defconfig hid it. On Linux
+`servicemanager` does not request contexts, and every row of the matrix runs on
+AppArmor to keep it that way.
+
+| Kernel | Security-context lookup in binder | Effect of a context manager requesting contexts |
+| --- | --- | --- |
+| 5.4, 5.10, 5.15, 5.16 | yes (mainline from 5.1) | every transaction to it refused |
+| 4.9 (vanilla) | no — Android-common 4.9 kernels carry it as a backport | none |
+
+Each kernel's security module is checked twice, because a kernel that quietly
+kept SELinux would supply every context and pass whatever userspace asks for:
+
+1. `build-kernels.sh` rejects the kernel if the merged `.config` is not
+   AppArmor-only.
+2. `run-qemu-test.sh` fails the row if the guest's `QEMU_BINDER_LSM` line does
+   not show AppArmor active and SELinux absent.
+
+The kernel's `variant` file records `lsm=apparmor` next to `arch=` and
+`protocol=`.
+
 ## Extending to a HALIF interface
 
 `binder_roundtrip.cpp` is a binder-runtime gate; it carries a marked hook to
@@ -102,3 +136,4 @@ via `I<Iface>::asInterface(...)`, and assert a method result.
 | `guest-init.sh` | guest PID 1: provision binder device, run test, poweroff |
 | `kconfig/binder.fragment` | kernel binder config (protocol 8) |
 | `kconfig/binder-ipc32.fragment` | legacy protocol-7 (32-bit) overlay |
+| `kconfig/lsm-apparmor.fragment` | AppArmor-only security module, on every kernel |

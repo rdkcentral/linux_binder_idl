@@ -72,34 +72,6 @@ set(ANDROID_AIDL_TOOL_DIR ${ANDROID_DIR}/aidl)
 set(ANDROID_BUILD_TOOLS_DIR ${ANDROID_DIR}/build-tools/linux-x86)
 
 ###########################################################
-# Stage android kernel headers (linux/, asm/, asm-generic/)
-# so <linux/android/binder.h> resolves to the project's copy
-# instead of the host system's /usr/include version.
-# Only kernel UAPI headers are staged — NOT musl C library
-# headers — to avoid conflicts with the host's glibc.
-###########################################################
-set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
-if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
-    set(_SYSROOT_ARCH "x86_64-linux-musl")
-else()
-    set(_SYSROOT_ARCH "i686-linux-musl")
-endif()
-set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
-
-if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
-    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
-         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
-    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
-         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
-endif()
-
-# Prioritize project kernel headers over system /usr/include/linux/
-include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
-
-###########################################################
 find_package(PkgConfig)
 
 ###########################################################
@@ -453,6 +425,36 @@ if (NOT EXISTS ${ANDROID_DIR})
         COMMAND sh -c "${CMAKE_CURRENT_LIST_DIR}/clone-android-binder-repo.sh"
     )
 endif()
+
+###########################################################
+# Stage android kernel headers (linux/, asm/, asm-generic/)
+# so <linux/android/binder.h> resolves to the project's copy
+# instead of the host system's /usr/include version.
+# Only kernel UAPI headers are staged — NOT musl C library
+# headers — to avoid conflicts with the host's glibc.
+# This follows the clone: on a fresh tree build-tools/ does not exist before
+# it, and staging would find nothing and leave the host's headers in use.
+###########################################################
+set(ANDROID_KERNEL_HEADERS_DIR "${CMAKE_BINARY_DIR}/android-kernel-headers")
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+    set(_SYSROOT_ARCH "x86_64-linux-musl")
+else()
+    set(_SYSROOT_ARCH "i686-linux-musl")
+endif()
+set(_SYSROOT_INCLUDE "${ANDROID_DIR}/build-tools/sysroots/${_SYSROOT_ARCH}/include")
+
+if(EXISTS "${_SYSROOT_INCLUDE}/linux" AND NOT EXISTS "${ANDROID_KERNEL_HEADERS_DIR}/linux")
+    file(MAKE_DIRECTORY "${ANDROID_KERNEL_HEADERS_DIR}")
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/linux"
+         "${ANDROID_KERNEL_HEADERS_DIR}/linux" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm" SYMBOLIC)
+    file(CREATE_LINK "${_SYSROOT_INCLUDE}/asm-generic"
+         "${ANDROID_KERNEL_HEADERS_DIR}/asm-generic" SYMBOLIC)
+endif()
+
+# Prioritize project kernel headers over system /usr/include/linux/
+include_directories(BEFORE SYSTEM "${ANDROID_KERNEL_HEADERS_DIR}")
 
 ###########################################################
 # Macro to generate stubs and proxies from .aidl

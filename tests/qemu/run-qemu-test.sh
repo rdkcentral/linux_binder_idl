@@ -48,6 +48,7 @@ KERNEL_DIR="${HERE}/kernels"
 # QEMU pins every kernel to one binary.
 QEMU="${QEMU:-}"
 KEEP=false
+EXPECT_LSM=default
 KERNEL_ARG=""
 TIMEOUT="${QEMU_TIMEOUT:-90}"
 
@@ -381,6 +382,20 @@ prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
     return 0
 }
 
+# Does the guest's reported security-module list match the kernel's variant?
+# default (a kernel built before lsm= was recorded): not checked. apparmor:
+# AppArmor active, SELinux not.
+lsm_matches() {   # <expected> <log>
+    local want="$1" got
+    [ "${want}" = "default" ] && return 0
+    got="$(sed -n 's/.*QEMU_BINDER_LSM: //p' "$2" | head -n 1 | tr -d '\r')"
+    [ -n "${got}" ] || return 1
+    case "${want}" in
+        apparmor) case ",${got}," in *,apparmor,*) case ",${got}," in *,selinux,*) return 1 ;; esac; return 0 ;; esac; return 1 ;;
+    esac
+    return 1
+}
+
 # Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
 #
 # With <expect> = mismatch the roles invert: this is the negative case, and the
@@ -395,6 +410,15 @@ boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline] [expec
         -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
         -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3${extra:+ ${extra}}" \
         >"${log}" 2>&1 || true
+
+    # An AppArmor kernel must really be one, or its row proves
+    # nothing: a kernel still running SELinux supplies every security context
+    # and passes whatever userspace requests.
+    if ! lsm_matches "${EXPECT_LSM}" "${log}"; then
+        echo "  FAIL  ${vlabel}: kernel built as LSM '${EXPECT_LSM}' reports '$(sed -n 's/.*QEMU_BINDER_LSM: //p' "${log}" | head -n 1 | tr -d '\r')' — see ${log}"
+        FAIL=$((FAIL+1)); LAST_RESULT="FAIL (wrong LSM)"
+        return
+    fi
 
     if [ "${expect}" = "mismatch" ]; then
         if grep -q 'does not match user space protocol' "${log}"; then
@@ -436,6 +460,7 @@ for kimg in "${KERNELS_LIST[@]}"; do
     label="$(basename "${kdir}")"
     arch="$(variant_field "${kdir}" arch x86_64)"
     proto="$(variant_field "${kdir}" protocol 8)"
+    EXPECT_LSM="$(variant_field "${kdir}" lsm default)"
 
     # A non-native guest ships its own busybox next to the bzImage.
     bb="${kdir}/busybox"; [ -x "${bb}" ] || bb="${BUSYBOX}"
@@ -513,13 +538,13 @@ done
 # whether that is the documented legacy case or a regression.
 echo ""
 echo "  Kernel matrix"
-printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
        KERNEL GUEST "SERVES" USERSPACE SWITCHES DERIVED RESULT
-printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
-       ---------------- -------- ----------- -------------------------- --------- -------- ------
+printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       ---------------------- -------- ----------- -------------------------- --------- -------- ------
 for r in "${MATRIX_ROWS[@]}"; do
     IFS='|' read -r k g p u sw dv res <<< "${r}"
-    printf '  %-16s %-8s %-11s %-26s %-9s %-8s %s\n' \
+    printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
            "${k}" "${g}" "protocol ${p}" "${u}" "${sw}" "${dv}" "${res}"
 done
 
