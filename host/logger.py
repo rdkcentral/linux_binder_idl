@@ -18,21 +18,25 @@
 # * SPDX-License-Identifier: Apache-2.0
 # */
 
-import inspect
-from datetime import datetime
-from colorama import Fore
+# Logging for the host toolchain, on the standard library alone, and on Python
+# 3.6 or later: no third-party package and no stdlib feature newer than 3.6.
+#
+# Records go to stderr as
+#     date time [LEVEL   ] tag  function():line message
+# coloured only when stderr is a terminal (and NO_COLOR is unset), so redirected
+# build logs carry no escape sequences. fatal() logs and exits with status 1.
 
-LOGLEVEL_TO_STR = [
-        "FATAL",
-        "ERROR",
-        "WARNING",
-        "INFO",
-        "DEBUG",
-        "VERBOSE"
-        ]
+import logging
+import os
+import sys
 
-# date&time [logLevel]  [logTag] function():line msg....
-_LOG_BLUEPRINT = "%s\t[%-8s] %s  %s():%s %s"
+_FORMAT = "%(asctime)s\t[%(levelname)-8s] %(name)s  %(caller_func)s():%(caller_line)d %(message)s"
+_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+_RED = "\033[31m"
+_YELLOW = "\033[33m"
+_RESET = "\033[0m"
+
 
 class Logger:
     FATAL   = 0
@@ -42,18 +46,31 @@ class Logger:
     DEBUG   = 4
     VERBOSE = 5
 
-    _log_tag = "default"
-    _log_level = INFO
+    # Logger level -> (stdlib level, printed name, colour)
+    _LEVELS = {
+        FATAL:   (logging.CRITICAL, "FATAL",   _RED),
+        ERROR:   (logging.ERROR,    "ERROR",   _RED),
+        WARNING: (logging.WARNING,  "WARNING", _YELLOW),
+        INFO:    (logging.INFO,     "INFO",    None),
+        DEBUG:   (logging.DEBUG,    "DEBUG",   None),
+        VERBOSE: (5,                "VERBOSE", None),
+    }
 
     def __init__(self, log_tag=None, log_level=None):
-        if log_tag is not None:
-            self._log_tag = log_tag
-
-        if log_level is not None:
-            self._log_level = log_level
+        self._log_level = self.INFO if log_level is None else log_level
+        # A standalone stdlib logger per instance, never one from
+        # logging.getLogger(): that registry is process-wide, and getLogger("")
+        # is the root logger - configuring it would change logging for the
+        # whole process. Filtering is done here, by _log_level.
+        self._logger = logging.Logger("default" if log_tag is None else log_tag, 1)
+        handler = logging.StreamHandler(sys.stderr)
+        colour = sys.stderr.isatty() and "NO_COLOR" not in os.environ
+        handler.setFormatter(_Formatter(colour))
+        self._logger.addHandler(handler)
 
     def fatal(self, msg):
         self._log(self.FATAL, msg)
+        sys.exit(1)
 
     def error(self, msg):
         self._log(self.ERROR, msg)
@@ -71,50 +88,37 @@ class Logger:
         self._log(self.VERBOSE, msg)
 
     def _log(self, level, msg):
-        if level == self.FATAL:
-            self._print(Fore.RED, level, msg)
-            assert False, "%s" %(msg)
-            #TODO kill the execution
+        if level > self._log_level:
             return
-        elif level == self.ERROR:
-            self._print(Fore.RED, level, msg)
-            return
-        elif level == self.WARNING:
-            self._print(Fore.YELLOW, level, msg)
-            return
-        elif level == self.INFO or level == self.DEBUG or level == self.VERBOSE:
-            # Use Fore.RESET to use the user's terminal default (usually white/grey)
-            self._print(Fore.RESET, level, msg) 
-            return
-        else:
-            self._print(Fore.RESET, self.VERBOSE, msg)
-            return
+        stdlib_level, name, colour = self._LEVELS.get(level, self._LEVELS[self.VERBOSE])
+        # The caller of fatal()/error()/...: two frames up from here. Passed as
+        # extra fields, since logging's own stacklevel needs Python 3.8.
+        caller = sys._getframe(2)
+        self._logger.log(stdlib_level, msg,
+                         extra={"logger_name": name, "logger_colour": colour,
+                                "caller_func": caller.f_code.co_name,
+                                "caller_line": caller.f_lineno})
 
-    def _print(self, fore, level, msg):
-        if (level <= self._log_level):
-            print(fore + _LOG_BLUEPRINT %
-                    (datetime.today().strftime('%Y-%m-%d %H:%M:%S'),
-                        LOGLEVEL_TO_STR[level], self._log_tag,
-                        inspect.stack()[3].function, inspect.stack()[3].lineno, msg))
 
-def test_logs():
-    logger = Logger("test_tag", Logger.VERBOSE)
-    logger.verbose("This is a VERBOSE type log with VERBOSE logging level")
-    logger.debug("This is a DEBUG type log with VERBOSE logging level")
-    logger.info("This is an INFO type log with VERBOSE logging level")
-    logger.warning("This is an WARNING type log with VERBOSE logging level")
-    logger.error("This is an ERROR type log with VERBOSE logging level")
-    logger.fatal("This is a FATAL type log with VERBOSE logging level")
+class _Formatter(logging.Formatter):
+    def __init__(self, colour):
+        super(_Formatter, self).__init__(_FORMAT, _DATE_FORMAT)
+        self._colour = colour
 
-    logger = Logger("test_tag", Logger.INFO)
-    logger.verbose("This is a VERBOSE type log with INFO logging level")
-    logger.debug("This is a DEBUG type log with INFO logging level")
-    logger.info("This is an INFO type log with INFO logging level")
-    logger.warning("This is an WARNING type log with INFO logging level")
-    logger.error("This is an ERROR type log with INFO logging level")
-    logger.fatal("This is a FATAL type log with INFO logging level")
+    def format(self, record):
+        record.levelname = getattr(record, "logger_name", record.levelname)
+        line = super().format(record)
+        colour = getattr(record, "logger_colour", None)
+        if self._colour and colour:
+            return colour + line + _RESET
+        return line
+
 
 if __name__ == '__main__':
-    test_logs()
-
-
+    demo = Logger("demo", Logger.VERBOSE)
+    demo.verbose("a VERBOSE line")
+    demo.debug("a DEBUG line")
+    demo.info("an INFO line")
+    demo.warning("a WARNING line")
+    demo.error("an ERROR line")
+    demo.fatal("a FATAL line - exits with status 1")
