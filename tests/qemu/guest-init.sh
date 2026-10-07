@@ -64,6 +64,23 @@ sleep 2
 
 echo "QEMU_BINDER_KERNEL: $(uname -r)"
 
+# The active security modules, so the runner can confirm an AppArmor kernel
+# really is one. /sys/kernel/security/lsm lists them from 4.15; before
+# that, securityfs shows one directory per active module that registers there.
+LSM="none"
+if mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || [ -d /sys/kernel/security ]; then
+    if [ -r /sys/kernel/security/lsm ]; then
+        LSM="$(cat /sys/kernel/security/lsm)"
+    else
+        for m in apparmor selinux smack tomoyo; do
+            [ -d "/sys/kernel/security/${m}" ] && LSM="${LSM#none},${m}"
+        done
+        LSM="${LSM#,}"
+    fi
+fi
+[ -d /sys/fs/selinux ] && case ",${LSM}," in *,selinux,*) ;; *) LSM="${LSM#none},selinux"; LSM="${LSM#,}" ;; esac
+echo "QEMU_BINDER_LSM: ${LSM:-none}"
+
 case "${SCENARIO}" in
     "")
         # Single process, both ends: the original gate.

@@ -46,6 +46,8 @@ FRAGMENT="${HERE}/kconfig/binder.fragment"
 IPC32_FRAGMENT="${HERE}/kconfig/binder-ipc32.fragment"
 IPC32OFF_FRAGMENT="${HERE}/kconfig/binder-ipc32-off.fragment"
 IPC32_PROMPT_PATCH="${HERE}/patches/linux-4.9-binder-ipc32-prompt.patch"
+LSM_APPARMOR_FRAGMENT="${HERE}/kconfig/lsm-apparmor.fragment"
+BUSYBOX_STATIC_FRAGMENT="${HERE}/kconfig/busybox-static.fragment"
 
 # Default matrix — one stable point release per minor across the supported
 # range (4.9 floor → 5.16), plus both 32-bit kernels at the 4.9 floor. Suffixes
@@ -56,6 +58,12 @@ IPC32_PROMPT_PATCH="${HERE}/patches/linux-4.9-binder-ipc32-prompt.patch"
 #           also needs the Kconfig prompt patch (see guest32_needs_patch).
 # 4.9 carries both 32-bit variants: it is the version where one kernel can serve
 # either protocol, which is the pair seen in production on identical silicon.
+#
+# Every kernel runs AppArmor as its only security module (LSM), SELinux off
+# (lsm-apparmor.fragment): the configuration RDK platforms ship. AppArmor cannot
+# supply a security context for an unconfined process, so on these kernels a
+# context manager that requests callers' contexts has every transaction refused
+# (#90) — the defconfig's SELinux would supply them and hide that.
 VERSIONS="${VERSIONS:-4.9.337 4.9.337:i386 4.9.337:ipc32 5.4.290 5.4.290:i386 5.10.205 5.15.148 5.16.20}"
 BR_VERSION="${BR_VERSION:-2024.02.9}"
 
@@ -116,16 +124,28 @@ for spec in ${VERSIONS}; do
     ver="${spec%%:*}"
     ipc32=false
     guest32=false
-    case "${spec}" in
-        *:ipc32) ipc32=true; guest32=true ;;
-        *:i386)  guest32=true ;;
-    esac
-    if ${ipc32}; then      label="${ver}-ipc32"
-    elif ${guest32}; then  label="${ver}-i386"
-    else                   label="${ver}"
+    unknown=""
+    IFS=':' read -r -a sfx <<< "${spec#"${ver}"}"
+    for s in "${sfx[@]}"; do
+        case "${s}" in
+            "")       ;;
+            ipc32)    ipc32=true; guest32=true ;;
+            i386)     guest32=true ;;
+            *)        unknown="${s}" ;;
+        esac
+    done
+    if [ -n "${unknown}" ]; then
+        echo "  FAIL  ${spec}: unknown suffix :${unknown}"; continue
     fi
+    if ${ipc32}; then      base="${ver}-ipc32"
+    elif ${guest32}; then  base="${ver}-i386"
+    else                   base="${ver}"
+    fi
+    label="${base}"
     kpatch_line=""
-    o="${BUILDROOT}/output-${label}"
+    # Every variant of one kernel shares the base kernel's Buildroot output, and
+    # so its toolchain; only the kernel is rebuilt when the variant changes.
+    o="${BUILDROOT}/output-${base}"
     dest="${OUT}/${label}"
 
     echo ""
@@ -159,7 +179,12 @@ for spec in ${VERSIONS}; do
         arch="x86_64"; br_arch="BR2_x86_64=y"
         frags="${FRAGMENT}"
     fi
+    frags="${frags} ${LSM_APPARMOR_FRAGMENT}"
 
+    # BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF builds Buildroot's own libelf for the
+    # kernel's objtool (x86 from 5.10 needs it), so the build does not depend on
+    # the build host having libelf-dev installed.
+    #
     # Buildroot defaults BR2_KERNEL_HEADERS_AS_KERNEL=y, taking the toolchain's
     # kernel headers from the custom kernel — then cross-checks them against the
     # selected header *series*, which defaults to the newest Buildroot knows.
@@ -176,11 +201,22 @@ BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="${ver}"
 BR2_LINUX_KERNEL_DEFCONFIG="${arch}"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="${frags}"
 BR2_LINUX_KERNEL_BZIMAGE=y
+BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="${BUSYBOX_STATIC_FRAGMENT}"
 ${kpatch_line}
 EOF
     if ! br_make O="${o}" defconfig BR2_DEFCONFIG="${o}.config" >/dev/null 2>&1; then
         echo "  FAIL  ${label}: buildroot defconfig failed"; continue
     fi
+    # Buildroot will not reconfigure a kernel it has already built, so when this
+    # output last built a different variant, discard the kernel tree first.
+    # The marker names the variant last built AND validated here; it is cleared
+    # now and rewritten only once the merged config passes every check below,
+    # so a kernel that fails validation is rebuilt rather than reused.
+    if [ "$(cat "${o}.kernel-variant" 2>/dev/null)" != "${label}" ]; then
+        br_make O="${o}" linux-dirclean >/dev/null 2>&1 || true
+    fi
+    rm -f "${o}.kernel-variant"
     if ! br_make O="${o}" linux >"${o}.build.log" 2>&1; then
         echo "  FAIL  ${label}: kernel build failed — see ${o}.build.log"; continue
     fi
@@ -199,6 +235,12 @@ EOF
     elif grep -q '^CONFIG_ANDROID_BINDER_IPC_32BIT=y' "${kcfg}"; then
         echo "  FAIL  ${label}: CONFIG_ANDROID_BINDER_IPC_32BIT is set on a protocol-8 variant"; continue
     fi
+    # And the security module, for the same reason: a kernel that kept SELinux
+    # supplies every context and would pass whatever userspace requests.
+    if ! grep -q '^CONFIG_SECURITY_APPARMOR=y' "${kcfg}" || grep -q '^CONFIG_SECURITY_SELINUX=y' "${kcfg}"; then
+        echo "  FAIL  ${label}: the merged config is not AppArmor-only (SELinux still set, or AppArmor missing)"; continue
+    fi
+    echo "${label}" > "${o}.kernel-variant"
 
     img="$(find "${o}/images" -name 'bzImage' -type f 2>/dev/null | head -1)"
     if [ -z "${img}" ]; then echo "  FAIL  ${label}: no bzImage produced"; continue; fi
@@ -207,20 +249,28 @@ EOF
     # Record what this kernel is, so run-qemu-test.sh pairs it with a userspace
     # of the same protocol and boots it under the right QEMU.
     ${ipc32} && proto=7 || proto=8
-    printf 'arch=%s\nprotocol=%s\n' "${arch}" "${proto}" > "${dest}/variant"
+    printf 'arch=%s\nprotocol=%s\nlsm=apparmor\n' "${arch}" "${proto}" > "${dest}/variant"
 
     # A non-native guest needs its own busybox; Buildroot already has a
     # matching toolchain here, so take it from the same output tree.
+    # It is linked statically (busybox-static.fragment), which removes its
+    # dependency on the host libc the runner stages for the binder binaries;
+    # rebuilt every time, since Buildroot would otherwise keep a dynamic one
+    # built before the fragment existed.
     if [ "${arch}" != "x86_64" ]; then
+        br_make O="${o}" busybox-dirclean >/dev/null 2>&1 || true
         if br_make O="${o}" busybox >>"${o}.build.log" 2>&1 \
            && [ -x "${o}/target/bin/busybox" ]; then
+            if file -L "${o}/target/bin/busybox" 2>/dev/null | grep -q 'dynamically linked'; then
+                echo "  WARN  ${label}: busybox is dynamically linked — the guest shell may not start on this host"
+            fi
             cp "${o}/target/bin/busybox" "${dest}/busybox"
         else
             echo "  WARN  ${label}: no ${arch} busybox built — run-qemu-test.sh will skip this variant"
         fi
     fi
 
-    echo "  OK    ${label}: ${dest}/bzImage (${arch}, protocol ${proto})"
+    echo "  OK    ${label}: ${dest}/bzImage (${arch}, protocol ${proto}, AppArmor)"
     built=$((built + 1))
 done
 

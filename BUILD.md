@@ -906,7 +906,9 @@ Only a **32-bit kernel at 4.17 or older** can be protocol 7: upstream declares t
 
 Every process on the device — 32-bit MW and 64-bit vendor alike — must speak the same protocol as the kernel. A wrong build fails at `ProcessState` init with `Binder driver protocol(N) does not match user space protocol(M)!` and does not fall back.
 
-**Note:** Some Ubuntu kernels (5.16.20) have SELinux context issues with binder. A patch may be required for `drivers/android/binder.c`.
+**Security module: RDK platforms run AppArmor (`CONFIG_SECURITY_APPARMOR=y`, SELinux off), and binder needs no kernel change for it.**
+
+`servicemanager` registers as the binder context manager without requesting callers' security contexts (`FLAT_BINDER_FLAG_TXN_SECURITY_CTX`); on Linux it does not use them. A context manager that does request them has every transaction to it refused under AppArmor, which cannot supply a context for an unconfined process, so nothing can register or find a service (`addService` / `getService` fail with `EX_TRANSACTION_FAILED`). A kernel patch that removes the security-context lookup from `drivers/android/binder.c`, or a userspace patch to `ProcessState.cpp`, is therefore not needed. The QEMU kernel matrix builds every kernel AppArmor-only ([`tests/qemu/README.md`](tests/qemu/README.md#security-module)).
 
 Refer to: <https://www.kernel.org/doc/html/latest/admin-guide/binderfs.html>
 

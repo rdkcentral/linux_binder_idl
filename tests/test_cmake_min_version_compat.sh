@@ -39,9 +39,10 @@ fail() { echo "  FAIL  $1"; exit 1; }
 # file() sub-commands that require CMake newer than the declared 3.8 floor.
 # (extend as needed)
 #   REAL_PATH      3.19
+#   CREATE_LINK    3.14
 #   ARCHIVE_*      3.18
 #   CONFIGURE      3.18
-PATTERN='file *\( *(REAL_PATH|ARCHIVE_CREATE|ARCHIVE_EXTRACT|CONFIGURE)\b'
+PATTERN='file *\( *(REAL_PATH|CREATE_LINK|ARCHIVE_CREATE|ARCHIVE_EXTRACT|CONFIGURE)\b'
 
 mapfile -t CMAKE_FILES < <(find "${ROOT}" \
     \( -name 'CMakeLists.txt' -o -name '*.cmake' -o -name '*.inc' \) \

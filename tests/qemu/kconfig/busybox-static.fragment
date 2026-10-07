@@ -1,0 +1,5 @@
+# The guest's busybox is linked statically. Linked dynamically it needs the
+# glibc of the Buildroot toolchain that built it, but the runner stages the
+# build host's libc into the guest for the binder userspace, and on a host
+# with an older glibc the guest's /bin/sh cannot start.
+CONFIG_STATIC=y
