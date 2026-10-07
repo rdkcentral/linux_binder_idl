@@ -1,0 +1,13 @@
+# AppArmor as the only security module, SELinux off: the configuration RDK
+# platforms ship, and the matrix default. AppArmor cannot supply a security
+# context for an unconfined process, so a context manager that requests
+# callers' contexts (FLAT_BINDER_FLAG_TXN_SECURITY_CTX) has every transaction
+# to it refused. CONFIG_LSM selects the active list from 5.1;
+# DEFAULT_SECURITY_APPARMOR is the selector before it.
+CONFIG_SECURITY=y
+CONFIG_SECURITYFS=y
+CONFIG_SECURITY_NETWORK=y
+# CONFIG_SECURITY_SELINUX is not set
+CONFIG_SECURITY_APPARMOR=y
+CONFIG_DEFAULT_SECURITY_APPARMOR=y
+CONFIG_LSM="apparmor"

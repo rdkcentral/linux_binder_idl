@@ -17,9 +17,14 @@
 # * SPDX-License-Identifier: Apache-2.0
 # */
 #
-# Optional QEMU binder round-trip test. Boots each target kernel with a tiny
-# initramfs (binder SDK + servicemanager + binder_roundtrip) and checks the
-# guest completes a binder transaction on that kernel.
+# Optional QEMU binder round-trip test. For each target kernel it builds a
+# userspace at that kernel's binder protocol, packs it into a tiny initramfs
+# (binder SDK + servicemanager + binder_roundtrip), boots the kernel, and
+# checks the guest completes a binder transaction.
+#
+# Each kernel's tests/qemu/kernels/<label>/variant file records its guest arch
+# and protocol; the matching QEMU binary and a same-protocol SDK are selected
+# from it. A variant the host cannot build skips cleanly.
 #
 # This is the runtime gate for the kernel-floor / protocol / bitness work
 # (linux_binder_idl#35 / #36). Docker can't do it — containers share the host
@@ -30,6 +35,7 @@
 #   ./tests/qemu/run-qemu-test.sh --kernel <bzImage>
 #   KERNELS="a/bzImage b/bzImage" ./tests/qemu/run-qemu-test.sh
 #   ./tests/qemu/run-qemu-test.sh --keep          # keep the work dir
+#   QEMU=qemu-system-i386 ./tests/qemu/run-qemu-test.sh   # pin the QEMU binary
 #
 # Build kernels first with ./tests/qemu/build-kernels.sh (or supply your own).
 # Exit: 0 = all booted kernels passed (or cleanly skipped); 1 = a failure.
@@ -38,8 +44,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 KERNEL_DIR="${HERE}/kernels"
-QEMU="${QEMU:-qemu-system-x86_64}"
+# Unset by default: the QEMU binary follows each kernel's guest arch. Setting
+# QEMU pins every kernel to one binary.
+QEMU="${QEMU:-}"
 KEEP=false
+EXPECT_LSM=apparmor
 KERNEL_ARG=""
 TIMEOUT="${QEMU_TIMEOUT:-90}"
 
@@ -47,7 +56,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) [ $# -ge 2 ] || { echo "--kernel needs a path" >&2; exit 2; }; KERNEL_ARG="$2"; shift 2 ;;
         --keep)   KEEP=true; shift ;;
-        -h|--help) sed -n '20,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '20,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -56,11 +65,20 @@ skip() { echo "  SKIP  qemu binder test — $1"; exit 0; }   # absence of toolin
 fail() { echo "  FAIL  qemu binder test — $1"; exit 1; }   # once opted in, real errors must fail
 
 # ---- Prerequisites (skip cleanly when missing) -----------------------------
+# QEMU and busybox are checked per variant instead — a 32-bit guest needs a
+# different binary and a different busybox than a 64-bit one.
 CXX="${CXX:-g++}"
-for tool in "${QEMU}" busybox cpio "${CXX}" timeout gzip ldd; do
+CC="${CC:-gcc}"
+# A Yocto-style CC/CXX carries embedded flags ("arm-...-gcc --sysroot=..."), so
+# resolve the binary from the first word before asking whether it exists.
+CC_BIN="${CC%% *}"
+CXX_BIN="${CXX%% *}"
+# cmake/make included: this script builds the binder SDK itself, so their
+# absence is missing optional tooling to skip on, not a build failure to report.
+for tool in cpio "${CC_BIN}" "${CXX_BIN}" cmake make timeout gzip ldd; do
     command -v "${tool}" >/dev/null 2>&1 || skip "${tool} not installed"
 done
-BUSYBOX="$(command -v busybox)"
+BUSYBOX="$(command -v busybox || true)"
 
 # Collect kernels.
 KERNELS_LIST=()
@@ -75,91 +93,461 @@ else
 fi
 [ "${#KERNELS_LIST[@]}" -gt 0 ] || skip "no kernels found (run ./tests/qemu/build-kernels.sh or pass --kernel/KERNELS)"
 
-# ---- Binder target build (build-linux-binder-aidl.sh) ----------------------
-SM_BIN="${REPO_ROOT}/out/target/bin/servicemanager"
-if [ ! -x "${SM_BIN}" ]; then
-    echo "  building binder target libs (build-linux-binder-aidl.sh) ..."
-    (cd "${REPO_ROOT}" && ./build-linux-binder-aidl.sh) >/dev/null 2>&1 \
-        || fail "build-linux-binder-aidl.sh failed (binder target libs could not be built)"
-fi
-SDK_LIB="${REPO_ROOT}/out/target/lib"
-# Headers install under out/target/include; accept a couple of layouts so an
-# upstream header-path change doesn't silently skip the test.
-SDK_INC=""
-for _c in "${REPO_ROOT}/out/target/include/binder_sdk" "${REPO_ROOT}/out/target/include"; do
-    [ -d "${_c}" ] && { SDK_INC="${_c}"; break; }
-done
-[ -d "${SDK_LIB}" ] && [ -n "${SDK_INC}" ] || skip "binder target libs/headers not staged (${SDK_LIB})"
-[ -x "${SM_BIN}" ] || skip "servicemanager not built at ${SM_BIN}"
-
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/qemu-binder.XXXXXX")"
 cleanup() { [ "${KEEP}" = true ] || rm -rf "${WORK}"; }
 trap cleanup EXIT
-ROOT="${WORK}/rootfs"
 
-# ---- Build the in-guest test binary ----------------------------------------
-echo "  compiling binder_roundtrip ..."
-"${CXX}" -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
-    "${HERE}/binder_roundtrip.cpp" \
-    -I"${SDK_INC}" -L"${SDK_LIB}" -lbinder -lutils -lbase -lcutils -llog \
-    -Wl,-rpath,/opt/binder/lib -o "${WORK}/binder_roundtrip" \
-    || fail "binder_roundtrip failed to compile/link against the SDK (ABI or flags regression?)"
+# ---- Per-variant guest userspace -------------------------------------------
+# The binder wire protocol is compiled into libbinder, so a protocol-7 kernel
+# needs a protocol-7 userspace and a protocol-8 kernel needs a protocol-8 one.
+# Each (arch, protocol) variant therefore gets its own SDK build, test binary
+# and initramfs, built into the work dir so a staged out/target of unknown
+# protocol can never satisfy the run. Variants are cached across the kernels
+# that share them.
+declare -A INITRAMFS_CACHE=()
+declare -A SKIPPED_VARIANT=()
+# Variants whose derivation is EXPECTED to disagree with the kernel. Not a
+# skip and not a failure: a checked assertion that the trap the docs describe
+# is real. See prepare_variant.
+declare -A EXPECTED_VARIANT=()
+# The protocol a derived build chose, kept beside the cached initramfs so a
+# cache hit still reports it in the matrix rather than a dash.
+declare -A DERIVED_CACHE=()
 
-# ---- Assemble the initramfs ------------------------------------------------
-mkdir -p "${ROOT}"/{bin,sbin,proc,sys,dev,opt/binder/bin,opt/binder/lib,lib,lib64}
-cp "${BUSYBOX}" "${ROOT}/bin/busybox"
-for a in sh mount ln sleep poweroff mkdir cat; do ln -sf busybox "${ROOT}/bin/${a}"; done
-cp "${WORK}/binder_roundtrip" "${ROOT}/opt/binder/bin/"
-cp "${SM_BIN}"                "${ROOT}/opt/binder/bin/servicemanager"
-cp -a "${SDK_LIB}/." "${ROOT}/opt/binder/lib/"
-cp "${HERE}/guest-init.sh" "${ROOT}/init"; chmod +x "${ROOT}/init"
+# Read a field from a kernel's `variant` file, falling back for kernels built
+# before build-kernels.sh started writing one.
+variant_field() {   # <kernel-dir> <key> <fallback>
+    local val=""
+    [ -f "$1/variant" ] && val="$(sed -n "s/^$2=//p" "$1/variant" | head -1)"
+    echo "${val:-$3}"
+}
 
-# Copy each binary's SYSTEM shared-lib closure + the ELF interpreter into the
+# ELF class of a binary, from byte 4 of the header: 32, 64, or empty. Used to
+# reject a host busybox of the wrong bitness for the guest — it would otherwise
+# be copied in silently and the guest would fail to exec /init.
+elf_class() {
+    case "$(od -An -tu1 -j4 -N1 "$1" 2>/dev/null | tr -d ' ')" in
+        1) echo 32 ;; 2) echo 64 ;; *) echo "" ;;
+    esac
+}
+
+# Copy a binary's SYSTEM shared-lib closure + the ELF interpreter into the
 # rootfs, preserving paths, so the guest userspace resolves at runtime. SDK libs
-# are skipped here — they're already staged at /opt/binder/lib and found via the
+# are skipped — they're already staged at /opt/binder/lib and found via the
 # binary's rpath; copying them under their host repo paths would only bloat the
 # initramfs and not match the guest layout.
-copy_deps() {
-    local bin="$1" dep
-    LD_LIBRARY_PATH="${SDK_LIB}" ldd "${bin}" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}' \
+copy_deps() {   # <binary> <rootfs> <sdk-lib-dir>
+    local bin="$1" root="$2" sdk="$3" dep
+    LD_LIBRARY_PATH="${sdk}" ldd "${bin}" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}' \
     | while read -r dep; do
         [ -f "${dep}" ] || continue
-        case "${dep}" in "${SDK_LIB}"/*) continue ;; esac   # SDK libs already at /opt/binder/lib
-        mkdir -p "${ROOT}$(dirname "${dep}")"
-        cp -n "${dep}" "${ROOT}${dep}" 2>/dev/null || true
+        case "${dep}" in "${sdk}"/*) continue ;; esac   # SDK libs already at /opt/binder/lib
+        mkdir -p "${root}$(dirname "${dep}")"
+        cp -n "${dep}" "${root}${dep}" 2>/dev/null || true
     done
 }
-copy_deps "${WORK}/binder_roundtrip"
-copy_deps "${SM_BIN}"
-copy_deps "${BUSYBOX}"
 
-INITRAMFS="${WORK}/initramfs.cpio.gz"
-(cd "${ROOT}" && find . | cpio -o -H newc 2>/dev/null | gzip) > "${INITRAMFS}"
+# Build the userspace for one variant. Sets VARIANT_INITRAMFS on success, or
+# VARIANT_SKIP with a reason when the host can't produce it.
+#
+# With <derive> non-empty the build is invoked WITHOUT TARGET_BITNESS or
+# BINDER_PROTOCOL, so it has to work both out from the toolchain — the path a
+# plain `./build-linux-binder-aidl.sh` takes. That derivation is what selects
+# the protocol for every integrator who does not pass the flags, so these rows
+# are the ones that prove the protocol-8 default (#72) reaches a real build -
+# and, on the legacy kernel, that it is deliberately wrong there and fails the
+# boot rather than shipping. The explicit variants below supply both values and
+# therefore cannot exercise any of it.
+prepare_variant() {   # <arch> <protocol> <busybox> [derive]
+    local arch="$1" proto="$2" bb="$3" derive="${4:-}"
+    local key="$1-p$2${derive:+-derived}"
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""; VARIANT_DERIVED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then
+        VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"
+        VARIANT_DERIVED="${DERIVED_CACHE[${key}]:-}"
+        # A variant expected to mismatch still boots; carry the expectation over
+        # the cache hit so the second caller scores it the same way as the first.
+        [ -n "${EXPECTED_VARIANT[${key}]:-}" ] && { VARIANT_EXPECTED=1; VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; }
+        return 0
+    fi
+    if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
+
+    local mflag="" bits=64
+    [ "${arch}" = "i386" ] && { mflag="-m32"; bits=32; }
+    [ "${proto}" = "7" ]  && bits=32                   # protocol 7 implies a 32-bit target
+
+    # Protocol 7 only exists on a 32-bit kernel, so a protocol-7 guest is i386.
+    # Anything else is a mislabelled kernel, and building for it would produce
+    # exactly the silent mismatch this harness is meant to catch.
+    if [ "${proto}" = "7" ] && [ "${arch}" != "i386" ]; then
+        SKIPPED_VARIANT[${key}]="protocol 7 declared on a ${arch} guest — CONFIG_ANDROID_BINDER_IPC_32BIT cannot be set on a 64-bit kernel"
+        VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
+    fi
+
+    # Probe with <errno.h>: it reaches asm/errno.h, so this catches a host that
+    # can link a bare -m32 binary but has no i386 kernel headers — which is the
+    # usual state after installing a 32-bit libc without them.
+    if [ -n "${mflag}" ] && \
+       ! printf '#include <errno.h>\nint main(){return 0;}\n' | ${CXX} ${mflag} -x c++ - -o /dev/null 2>/dev/null; then
+        SKIPPED_VARIANT[${key}]="no usable 32-bit toolchain — run tests/install.sh --with-32bit (libc6-dev-i386 + lib32stdc++ + linux-libc-dev:i386)"
+        VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
+    fi
+
+    local want=64; [ "${arch}" = "i386" ] && want=32
+    if [ -z "${bb}" ] || [ ! -x "${bb}" ]; then
+        SKIPPED_VARIANT[${key}]="no busybox available for the ${arch} guest rootfs"
+        VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
+    fi
+    if [ "$(elf_class "${bb}")" != "${want}" ]; then
+        SKIPPED_VARIANT[${key}]="busybox at ${bb} is not ${want}-bit — a ${arch} guest needs its own (build-kernels.sh stages one next to the bzImage)"
+        VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1
+    fi
+
+    local sdk_out="${WORK}/sdk-${key}" sdk_build="${WORK}/build-${key}"
+    # Derived runs pass neither flag; the toolchain in CC/CXX is the only input.
+    local -a proto_env=(TARGET_BITNESS="${bits}" BINDER_PROTOCOL="${proto}")
+    [ -n "${derive}" ] && proto_env=()
+    # Emptying the array removes what this function would have passed, but the
+    # child still INHERITS anything the caller exported - so a BINDER_PROTOCOL=7
+    # sitting in the invoking shell would make a "derived" row build protocol 7
+    # and quietly invalidate the negative-case assertion below. Unset every
+    # spelling first, then apply the explicit assignments, so a derived run is
+    # genuinely derived and an explicit one gets exactly what is named here.
+    echo "  building ${arch} protocol-${proto} binder SDK${derive:+ (derived from the toolchain)} ..."
+    if ! (cd "${REPO_ROOT}" && \
+          env -u BINDER_PROTOCOL -u BINDER_IPC_32BIT \
+              -u TARGET_BITNESS -u TARGET_LIB32_VERSION -u TARGET_LIB64_VERSION \
+              BUILD_DIR="${sdk_build}" OUT_DIR="${sdk_out}" \
+          CC="${CC}${mflag:+ ${mflag}}" CXX="${CXX}${mflag:+ ${mflag}}" \
+          "${proto_env[@]}" \
+          ./build-linux-binder-aidl.sh no-host-aidl) >"${WORK}/sdk-${key}.log" 2>&1; then
+        [ "${KEEP}" = true ] || tail -15 "${WORK}/sdk-${key}.log" | sed 's/^/        /'
+        fail "binder SDK build failed for ${arch}/protocol-${proto} (log: ${WORK}/sdk-${key}.log, kept with --keep)"
+    fi
+
+    # Assert the derivation picked the protocol this kernel serves, before the
+    # boot does it the slow way. A wrong answer here is the field failure
+    # (`protocol(7) does not match user space protocol(8)`) waiting to happen,
+    # and naming it at configure level makes the cause obvious in CI output.
+    if [ -n "${derive}" ]; then
+        # Read the build's own statement of what it selected. The CMake cache is
+        # not usable for this: BINDER_PROTOCOL is a plain set(), so it lands in
+        # the cache only when passed with -D — exactly what a derived run does
+        # not do.
+        local got_proto
+        got_proto="$(sed -n 's/.*binder wire protocol: \([78]\).*/\1/p' "${WORK}/sdk-${key}.log" | head -1)"
+
+        # Derivation cannot reach protocol 7 — the default is protocol 8 on
+        # every toolchain (#72), because bitness cannot select the protocol and
+        # a toolchain-derived default therefore has to be wrong somewhere. It is
+        # wrong here, on the legacy kernel, and that is deliberate: the rare and
+        # shrinking case is the one that must state its switch.
+        #
+        # Mark the variant expected-to-mismatch and carry on building it. The
+        # boot is the point: it puts the field failure — `protocol(7) does not
+        # match user space protocol(8)` — in the guest console, which is the
+        # evidence PROTOCOL.md cites. Asserting the derived number alone would
+        # only restate what the build log already said.
+        if [ "${proto}" = "7" ]; then
+            if [ "${got_proto}" = "8" ]; then
+                VARIANT_DERIVED="8"; DERIVED_CACHE[${key}]="8"
+                EXPECTED_VARIANT[${key}]="derivation gave protocol 8 against a protocol-7 kernel, as documented — a legacy platform must state -DBINDER_PROTOCOL=7"
+                VARIANT_SKIP="${EXPECTED_VARIANT[${key}]}"; VARIANT_EXPECTED=1
+                echo "    derived protocol 8 against a protocol-7 kernel — booting it to prove the mismatch"
+            else
+                fail "derivation gave protocol ${got_proto:-<none reported>} against a protocol-7 kernel. The default is protocol 8 on every toolchain; if that changed deliberately, the row A guidance in PROTOCOL.md and BUILD.md is now stale (log: ${WORK}/sdk-${key}.log)"
+            fi
+        else
+            VARIANT_DERIVED="${got_proto}"; DERIVED_CACHE[${key}]="${got_proto}"
+            if [ "${got_proto}" != "${proto}" ]; then
+                fail "derived protocol is wrong for ${key}: a ${arch} toolchain selected protocol ${got_proto:-<none reported>}, but this kernel serves protocol ${proto} (log: ${WORK}/sdk-${key}.log)"
+            fi
+            echo "    derived protocol ${got_proto} matches the kernel"
+        fi
+    fi
+
+    local sdk_lib="${sdk_out}/lib" sdk_inc="" sm_bin="${sdk_out}/bin/servicemanager"
+    # Headers install under <out>/include; accept a couple of layouts so an
+    # upstream header-path change doesn't silently skip the test.
+    for _c in "${sdk_out}/include/binder_sdk" "${sdk_out}/include"; do
+        [ -d "${_c}" ] && { sdk_inc="${_c}"; break; }
+    done
+    [ -d "${sdk_lib}" ] && [ -n "${sdk_inc}" ] || fail "binder SDK not staged for ${key} (${sdk_lib})"
+    [ -x "${sm_bin}" ] || fail "servicemanager not built for ${key} at ${sm_bin}"
+
+    echo "  compiling binder_roundtrip (${arch}) ..."
+    ${CXX} ${mflag} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" \
+        -I"${sdk_inc}" -L"${sdk_lib}" -lbinder -lutils -lbase -lcutils -llog \
+        -Wl,-rpath,/opt/binder/lib -o "${WORK}/binder_roundtrip-${key}" \
+        || fail "binder_roundtrip failed to compile/link against the ${key} SDK (ABI or flags regression?)"
+
+    local root="${WORK}/rootfs-${key}"
+    mkdir -p "${root}"/{bin,sbin,proc,sys,dev,opt/binder/bin,opt/binder/lib,lib,lib64}
+    cp "${bb}" "${root}/bin/busybox"
+    local a; for a in sh mount ln sleep poweroff mkdir cat; do ln -sf busybox "${root}/bin/${a}"; done
+    cp "${WORK}/binder_roundtrip-${key}" "${root}/opt/binder/bin/binder_roundtrip"
+    cp "${sm_bin}"                       "${root}/opt/binder/bin/servicemanager"
+    cp -a "${sdk_lib}/." "${root}/opt/binder/lib/"
+    cp "${HERE}/guest-init.sh" "${root}/init"; chmod +x "${root}/init"
+
+    copy_deps "${WORK}/binder_roundtrip-${key}" "${root}" "${sdk_lib}"
+    copy_deps "${sm_bin}"                       "${root}" "${sdk_lib}"
+    copy_deps "${bb}"                           "${root}" "${sdk_lib}"
+
+    local img="${WORK}/initramfs-${key}.cpio.gz"
+    (cd "${root}" && find . | cpio -o -H newc 2>/dev/null | gzip) > "${img}"
+    INITRAMFS_CACHE[${key}]="${img}"
+    VARIANT_INITRAMFS="${img}"
+    return 0
+}
+
+# A 32-bit busybox for a rootfs whose guest kernel is 64-bit. build-kernels.sh
+# stages one beside every non-x86_64 bzImage, so any i386 kernel directory
+# supplies it; without one the mixed pairing skips rather than failing.
+find_busybox32() {
+    local k d c
+    for k in "${KERNELS_LIST[@]}"; do
+        d="$(dirname "${k}")"
+        c="${d}/busybox"
+        [ -x "${c}" ] || continue
+        # A busybox staged beside an i386 kernel is an i386 busybox, by
+        # construction. prepare_variant re-checks the ELF class anyway, so a
+        # wrong one is caught there rather than reaching the guest.
+        [ "$(variant_field "${d}" arch x86_64)" = "i386" ] && { echo "${c}"; return 0; }
+    done
+    return 1
+}
+
+# Assemble a rootfs carrying BOTH bitnesses for one kernel: the native SDK at
+# /opt/binder and the 32-bit one at /opt/binder32, each with its own build of
+# the test binary rpath'd to its own libs. Sets VARIANT_INITRAMFS.
+#
+# This is what the single-bitness rows cannot show. They transact with a proxy
+# back into the same process, so both ends are always the same build; here the
+# caller and the callee are different ELF classes and the kernel has to
+# translate between them, which is the whole reason protocol 8 exists.
+prepare_mixed() {   # <proto> <busybox-64> <busybox-32>
+    local proto="$1" bb64="$2" bb32="$3"
+    local key="mixed-p${proto}"
+    VARIANT_INITRAMFS=""; VARIANT_SKIP=""; VARIANT_EXPECTED=""
+    if [ -n "${INITRAMFS_CACHE[${key}]:-}" ]; then VARIANT_INITRAMFS="${INITRAMFS_CACHE[${key}]}"; return 0; fi
+    if [ -n "${SKIPPED_VARIANT[${key}]:-}" ]; then VARIANT_SKIP="${SKIPPED_VARIANT[${key}]}"; return 1; fi
+
+    # Both userspaces, built by the existing per-variant path so they are the
+    # same artefacts the single-bitness rows use, and cached alongside them.
+    prepare_variant x86_64 "${proto}" "${bb64}" || { VARIANT_SKIP="64-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+    prepare_variant i386   "${proto}" "${bb32}" || { VARIANT_SKIP="32-bit userspace: ${VARIANT_SKIP}"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    local sdk64="${WORK}/sdk-x86_64-p${proto}" sdk32="${WORK}/sdk-i386-p${proto}"
+    local root="${WORK}/rootfs-${key}"
+    rm -rf "${root}"
+    mkdir -p "${root}"/{bin,sbin,proc,sys,dev,lib,lib64} \
+             "${root}"/opt/binder/{bin,lib} "${root}"/opt/binder32/{bin,lib}
+    cp "${bb64}" "${root}/bin/busybox"
+    local a; for a in sh mount ln sleep poweroff mkdir cat grep; do ln -sf busybox "${root}/bin/${a}"; done
+
+    cp -a "${sdk64}/lib/." "${root}/opt/binder/lib/"
+    cp -a "${sdk32}/lib/." "${root}/opt/binder32/lib/"
+    cp "${sdk64}/bin/servicemanager" "${root}/opt/binder/bin/servicemanager"
+
+    # One build of the test binary per bitness, each resolving its own SDK.
+    local inc64="" inc32="" _c
+    for _c in "${sdk64}/include/binder_sdk" "${sdk64}/include"; do [ -d "${_c}" ] && { inc64="${_c}"; break; }; done
+    for _c in "${sdk32}/include/binder_sdk" "${sdk32}/include"; do [ -d "${_c}" ] && { inc32="${_c}"; break; }; done
+    [ -n "${inc64}" ] && [ -n "${inc32}" ] || { VARIANT_SKIP="binder SDK headers missing for the mixed rootfs"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc64}" -L"${sdk64}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder/lib \
+        -o "${root}/opt/binder/bin/binder_roundtrip" 2>"${WORK}/mixed-cc64.log" \
+        || { VARIANT_SKIP="64-bit test binary failed to build (log: ${WORK}/mixed-cc64.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    ${CXX} -m32 -std=c++17 -O1 -Wno-attributes -Wno-write-strings -Wno-return-type \
+        "${HERE}/binder_roundtrip.cpp" -I"${inc32}" -L"${sdk32}/lib" \
+        -lbinder -lutils -lbase -lcutils -llog -Wl,-rpath,/opt/binder32/lib \
+        -o "${root}/opt/binder32/bin/binder_roundtrip" 2>"${WORK}/mixed-cc32.log" \
+        || { VARIANT_SKIP="32-bit test binary failed to build (log: ${WORK}/mixed-cc32.log)"; SKIPPED_VARIANT[${key}]="${VARIANT_SKIP}"; return 1; }
+
+    cp "${HERE}/guest-init.sh" "${root}/init"; chmod +x "${root}/init"
+    copy_deps "${root}/opt/binder/bin/binder_roundtrip"   "${root}" "${sdk64}/lib"
+    copy_deps "${root}/opt/binder32/bin/binder_roundtrip" "${root}" "${sdk32}/lib"
+    copy_deps "${root}/opt/binder/bin/servicemanager"     "${root}" "${sdk64}/lib"
+    copy_deps "${bb64}"                                   "${root}" "${sdk64}/lib"
+
+    local img="${WORK}/initramfs-${key}.cpio.gz"
+    (cd "${root}" && find . | cpio -o -H newc 2>/dev/null | gzip) > "${img}"
+    INITRAMFS_CACHE[${key}]="${img}"
+    VARIANT_INITRAMFS="${img}"
+    return 0
+}
+
+# Does the guest's reported security-module list match the kernel's variant?
+# apparmor: AppArmor active, SELinux not. A kernel with no lsm= recorded is
+# held to apparmor too, so an old cached SELinux kernel cannot pass unchecked;
+# lsm=any in a kernel's variant file is the explicit opt-out for one brought in
+# deliberately with another security module.
+lsm_matches() {   # <expected> <log>
+    local want="$1" got
+    [ "${want}" = "any" ] && return 0
+    got="$(sed -n 's/.*QEMU_BINDER_LSM: //p' "$2" | head -n 1 | tr -d '\r')"
+    [ -n "${got}" ] || return 1
+    case "${want}" in
+        apparmor) case ",${got}," in *,apparmor,*) case ",${got}," in *,selinux,*) return 1 ;; esac; return 0 ;; esac; return 1 ;;
+    esac
+    return 1
+}
+
+# Boot one prepared variant and score it. VARIANT_INITRAMFS must be set.
+#
+# With <expect> = mismatch the roles invert: this is the negative case, and the
+# boot is expected to die in ProcessState with the driver's protocol check. A
+# round-trip that succeeds there is the failure, because it would mean a
+# protocol-8 userspace now works against a protocol-7 kernel and every
+# protocol-mismatch claim in PROTOCOL.md and BUILD.md is wrong.
+boot_variant() {   # <kimg> <qemu-bin> <label> <log-name> [extra-cmdline] [expect]
+    local kimg="$1" qemu_bin="$2" vlabel="$3" log="${WORK}/qemu-$4.log" extra="${5:-}" expect="${6:-}"
+    timeout "${TIMEOUT}" "${qemu_bin}" \
+        -m 512 -no-reboot -nographic \
+        -kernel "${kimg}" -initrd "${VARIANT_INITRAMFS}" \
+        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3${extra:+ ${extra}}" \
+        >"${log}" 2>&1 || true
+
+    # An AppArmor kernel must really be one, or its row proves
+    # nothing: a kernel still running SELinux supplies every security context
+    # and passes whatever userspace requests.
+    if ! lsm_matches "${EXPECT_LSM}" "${log}"; then
+        echo "  FAIL  ${vlabel}: kernel built as LSM '${EXPECT_LSM}' reports '$(sed -n 's/.*QEMU_BINDER_LSM: //p' "${log}" | head -n 1 | tr -d '\r')' — see ${log}"
+        FAIL=$((FAIL+1)); LAST_RESULT="FAIL (wrong LSM)"
+        return
+    fi
+
+    if [ "${expect}" = "mismatch" ]; then
+        if grep -q 'does not match user space protocol' "${log}"; then
+            echo "  PASS  ${vlabel}: $(grep -o '[^ ]*protocol([0-9]*) does not match user space protocol([0-9]*).*' "${log}" | head -n 1)"
+            PASS=$((PASS+1)); LAST_RESULT="PASS (expected mismatch)"
+        elif grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+            echo "  FAIL  ${vlabel}: the round-trip succeeded, so a protocol-8 userspace is no longer refused by a protocol-7 kernel — see ${log}"
+            FAIL=$((FAIL+1)); LAST_RESULT="FAIL (mismatch not detected)"
+        else
+            echo "  FAIL  ${vlabel}: the boot failed without the driver's protocol message — see ${log}"
+            [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+            FAIL=$((FAIL+1)); LAST_RESULT="FAIL (wrong failure)"
+        fi
+        return
+    fi
+
+    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
+        echo "  PASS  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -n 1)"
+        PASS=$((PASS+1)); LAST_RESULT=PASS
+    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
+        echo "  FAIL  ${vlabel}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -n 1)"
+        FAIL=$((FAIL+1)); LAST_RESULT=FAIL
+    else
+        echo "  FAIL  ${vlabel}: no result sentinel (boot/timeout?) — see ${log}"
+        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
+        FAIL=$((FAIL+1)); LAST_RESULT="FAIL (no sentinel)"
+    fi
+}
 
 # ---- Boot each kernel ------------------------------------------------------
 FAIL=0; PASS=0; SKIPPED=0
+MATRIX_ROWS=()
+# kernel | guest arch | protocol the kernel serves | userspace under test |
+# switches | what derivation chose | outcome
+row() { MATRIX_ROWS+=("$1|$2|$3|$4|$5|$6|$7"); }
 for kimg in "${KERNELS_LIST[@]}"; do
     if [ ! -f "${kimg}" ]; then echo "  SKIP  ${kimg} (not found)"; SKIPPED=$((SKIPPED+1)); continue; fi
-    label="$(basename "$(dirname "${kimg}")")"
-    log="${WORK}/qemu-${label}.log"
-    echo "[qemu] booting kernel: ${label} (${kimg})"
-    timeout "${TIMEOUT}" "${QEMU}" \
-        -m 512 -no-reboot -nographic \
-        -kernel "${kimg}" -initrd "${INITRAMFS}" \
-        -append "console=ttyS0 rdinit=/init panic=-1 loglevel=3" \
-        >"${log}" 2>&1 || true
+    kdir="$(dirname "${kimg}")"
+    label="$(basename "${kdir}")"
+    arch="$(variant_field "${kdir}" arch x86_64)"
+    proto="$(variant_field "${kdir}" protocol 8)"
+    EXPECT_LSM="$(variant_field "${kdir}" lsm apparmor)"
 
-    if grep -q 'QEMU_BINDER_RESULT: PASS' "${log}"; then
-        echo "  PASS  ${label}: $(grep -o 'QEMU_BINDER_RESULT: PASS.*' "${log}" | head -1)"
-        PASS=$((PASS+1))
-    elif grep -q 'QEMU_BINDER_RESULT: FAIL' "${log}"; then
-        echo "  FAIL  ${label}: $(grep -o 'QEMU_BINDER_RESULT: FAIL.*' "${log}" | head -1)"
-        FAIL=$((FAIL+1))
-    else
-        echo "  FAIL  ${label}: no result sentinel (boot/timeout?) — see ${log}"
-        [ "${KEEP}" = true ] || tail -15 "${log}" | sed 's/^/        /'
-        FAIL=$((FAIL+1))
+    # A non-native guest ships its own busybox next to the bzImage.
+    bb="${kdir}/busybox"; [ -x "${bb}" ] || bb="${BUSYBOX}"
+
+    qemu_bin="${QEMU:-qemu-system-${arch}}"
+    if ! command -v "${qemu_bin}" >/dev/null 2>&1; then
+        echo "  SKIP  ${label}: ${qemu_bin} not installed"; SKIPPED=$((SKIPPED+1)); continue
     fi
+    # Two passes per kernel: the explicit one pins both flags and proves the
+    # protocols interoperate; the derived one passes neither and proves the
+    # build picks the right protocol on its own — the path every integrator
+    # who does not set the flags takes.
+    for mode in "" derive; do
+        vlabel="${label}${mode:+ [derived]}"
+        if ! prepare_variant "${arch}" "${proto}" "${bb}" "${mode}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+            row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "-" "SKIP"
+            continue
+        fi
+
+        # The derivation is wrong on the protocol-7 kernel by design, so this
+        # variant is booted as the negative case: the mismatch has to appear in
+        # the guest console rather than be inferred from the build log.
+        expect=""; [ -n "${VARIANT_EXPECTED}" ] && { expect=mismatch; vlabel="${vlabel} [expected mismatch]"; }
+        echo "[qemu] booting kernel: ${vlabel} (${arch}, protocol ${proto})"
+        boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}${mode:+-derived}" "" "${expect}"
+        row "${label}" "${arch}" "${proto}" "${arch}" "$([ -n "${mode}" ] && echo derived || echo explicit)" "${VARIANT_DERIVED:--}" "${LAST_RESULT}"
+    done
+
+    # A third pass on a 64-bit kernel: 32-bit userspace over it. This is the
+    # configuration recommended on a 64-bit platform — middleware and vendor
+    # both 32-bit — and it runs the binder driver's COMPAT path, which is
+    # distinct code from both native pairings and which nothing else here
+    # reaches. The userspace is the (i386, protocol 8) variant already built
+    # for the 32-bit-kernel rows, so this is a boot, not another build.
+    if [ "${arch}" = "x86_64" ] && [ "${proto}" = "8" ]; then
+        vlabel="${label} [32-bit userspace]"
+        bb32="$(find_busybox32 || true)"
+        if [ -z "${bb32}" ]; then
+            echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+            SKIPPED=$((SKIPPED+1))
+        elif ! prepare_variant i386 "${proto}" "${bb32}"; then
+            echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1))
+        else
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, i386 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-user32"
+            row "${label}" "${arch}" "${proto}" "i386 (compat)" "explicit" "-" "${LAST_RESULT}"
+        fi
+
+        # And the pairing the single-bitness rows cannot show: a 32-bit and a
+        # 64-bit process transacting with EACH OTHER over this kernel. Both
+        # directions, because a reply crosses the boundary as well as a call.
+        # This is the configuration a 64-bit vendor layer with 32-bit
+        # middleware would ship, and the reason protocol 8 exists at all.
+        for scen in server64-client32 server32-client64; do
+            vlabel="${label} [${scen}]"
+            if [ -z "${bb32}" ]; then
+                echo "  SKIP  ${vlabel}: no 32-bit busybox staged — build an i386 kernel variant first"
+                SKIPPED=$((SKIPPED+1)); continue
+            fi
+            if ! prepare_mixed "${proto}" "${bb}" "${bb32}"; then
+                echo "  SKIP  ${vlabel}: ${VARIANT_SKIP}"; SKIPPED=$((SKIPPED+1)); continue
+            fi
+            echo "[qemu] booting kernel: ${vlabel} (${arch} kernel, mixed 32/64 userspace, protocol ${proto})"
+            boot_variant "${kimg}" "${qemu_bin}" "${vlabel}" "${label}-${scen}" "binder_scenario=${scen}"
+            row "${label}" "${arch}" "${proto}" "${scen} (mixed)" "explicit" "-" "${LAST_RESULT}"
+        done
+    fi
+done
+
+# ---- Matrix cross-reference ------------------------------------------------
+# Per-boot lines say what happened; this says what was COVERED. The two columns
+# that matter together are "kernel serves" and "derived": where they differ, the
+# build would have chosen a protocol the kernel cannot speak, and the row says
+# whether that is the documented legacy case or a regression.
+echo ""
+echo "  Kernel matrix"
+printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       KERNEL GUEST "SERVES" USERSPACE SWITCHES DERIVED RESULT
+printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
+       ---------------------- -------- ----------- -------------------------- --------- -------- ------
+for r in "${MATRIX_ROWS[@]}"; do
+    IFS='|' read -r k g p u sw dv res <<< "${r}"
+    printf '  %-22s %-8s %-11s %-26s %-9s %-8s %s\n' \
+           "${k}" "${g}" "protocol ${p}" "${u}" "${sw}" "${dv}" "${res}"
 done
 
 echo ""

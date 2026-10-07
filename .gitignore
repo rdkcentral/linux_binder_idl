@@ -19,3 +19,6 @@ cmake_install.cmake
 # Generated AIDL code for examples - regenerate with example/generate_cpp.sh
 example/**/gen/
 example/stable/generated/
+# QEMU harness artifacts - rebuild with tests/qemu/build-kernels.sh
+tests/qemu/.buildroot/
+tests/qemu/kernels/

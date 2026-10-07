@@ -343,10 +343,32 @@ index 58b0b35..fc2bf5a 100644
  constexpr int32_t kHeader = B_PACK_CHARS('V', 'N', 'D', 'R');
  #elif defined(__ANDROID_RECOVERY__)
 diff --git a/libs/binder/ProcessState.cpp b/libs/binder/ProcessState.cpp
-index 4a01d81..57d111a 100644
+index 4a01d81..bb19c5c 100644
 --- a/libs/binder/ProcessState.cpp
 +++ b/libs/binder/ProcessState.cpp
-@@ -511,7 +511,7 @@ ProcessState::ProcessState(const char* driver)
+@@ -193,7 +193,21 @@ bool ProcessState::becomeContextManager()
+     AutoMutex _l(mLock);
+ 
+     flat_binder_object obj {
++#ifdef __ANDROID__
+         .flags = FLAT_BINDER_FLAG_TXN_SECURITY_CTX,
++#else
++        // On Linux servicemanager does not use callers' security contexts
++        // (Access is built without SELinux). Requesting them makes the kernel
++        // fail every transaction to servicemanager where no LSM can supply
++        // one: AppArmor for unconfined processes, or no LSM at all.
++        //
++        // TODO: AppArmor tech debt. RDK's AppArmor policy leaves binder
++        // processes unconfined, so there is no context to pass. Once the
++        // policy confines them, request FLAT_BINDER_FLAG_TXN_SECURITY_CTX
++        // here again and make servicemanager's Access check the caller's
++        // AppArmor label, instead of allowing every caller.
++        .flags = 0,
++#endif
+     };
+ 
+     int result = ioctl(mDriverFD, BINDER_SET_CONTEXT_MGR_EXT, &obj);
+@@ -511,7 +525,7 @@ ProcessState::ProcessState(const char* driver)
          }
      }
  

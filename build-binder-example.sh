@@ -25,13 +25,18 @@
 #
 # Behaviour:
 #   - Always calls build-linux-binder-aidl.sh first (stamps make this cheap).
+#   - Generates the example's C++ from .aidl when it is missing or out of date.
 #   - Uses its own build directory: ${BUILD_DIR}/examples
 #   - Runs CMake and builds the example targets.
 #
+# example/stable/generated/ is build output, not a tracked artifact, so it is
+# absent on a fresh clone and is generated here like any other build product.
+#
 # Flags:
-#   --force   Force rebuild of examples (and pass --force to Binder SDK build).
-#   --clean   Remove examples build dir (and pass --clean to Binder SDK build).
-#   --help    Show usage.
+#   --force      Force rebuild of examples (and pass --force to Binder SDK build).
+#   --clean      Remove examples build dir (and pass --clean to Binder SDK build).
+#   --clean-aidl Regenerate the example's C++ from .aidl, then build.
+#   --help       Show usage.
 # ==============================================================================
 
 set -e
@@ -56,7 +61,7 @@ Build binder example binaries that link against the target Binder SDK.
 Options:
   force         Force rebuild of Binder SDK and examples.
   clean         Remove examples build directory (and clean Binder SDK as well).
-  clean-aidl    Remove generated AIDL C++ files (requires regeneration).
+  clean-aidl    Regenerate the example's AIDL C++ from source, then build.
   help          Show this help and exit.
 
 Environment:
@@ -85,17 +90,11 @@ LOGI "EXAMPLE_BUILD   = ${EXAMPLE_BUILD_DIR}"
 LOGI "FORCE=${FORCE} CLEAN=${CLEAN} CLEAN_AIDL=${CLEAN_AIDL}"
 
 # ------------------------------------------------------------------------------
-# Handle clean-only modes (exit after cleanup)
+# Handle clean-only mode (exit after cleanup)
+#
+# --clean-aidl is not handled here: it forces regeneration in step 3 and then
+# builds, so that one invocation leaves a built example behind.
 # ------------------------------------------------------------------------------
-if [ "${CLEAN_AIDL}" -eq 1 ]; then
-  FWMANAGER_GEN_DIR="${SCRIPT_DIR}/example/stable/generated/FWManager"
-  LOGW "Removing generated AIDL C++ files..."
-  rm -rf "${FWMANAGER_GEN_DIR}"
-  mkdir -p "${FWMANAGER_GEN_DIR}"
-  LOGI "✓ Generated AIDL files cleaned"
-  exit 0
-fi
-
 if [ "${CLEAN}" -eq 1 ]; then
   LOGW "Cleaning binder example build directory..."
   rm -rf "${EXAMPLE_BUILD_DIR}"
@@ -127,45 +126,40 @@ LOGI "Building AIDL generator tool..."
 # 3) Generate C++ code from AIDL files
 # ------------------------------------------------------------------------------
 FWMANAGER_GEN_DIR="${SCRIPT_DIR}/example/stable/generated/FWManager"
-if [ ! -d "$FWMANAGER_GEN_DIR" ] || [ -z "$(ls -A "$FWMANAGER_GEN_DIR" 2>/dev/null)" ]; then
-  LOGW "⚠️  Generated AIDL C++ files are missing or empty!"
-  LOGW "    These files are normally pre-committed to git in:"
-  LOGW "    ${FWMANAGER_GEN_DIR}"
-  LOGW ""
-  LOGW "    Regenerating will modify tracked files in the repository."
-  LOGW ""
+FWMANAGER_AIDL_DIR="${SCRIPT_DIR}/example/FWManager/aidl"
+AIDL_STAMP="${FWMANAGER_GEN_DIR}/.aidl.stamp"
 
-  if [ -t 0 ]; then  # Check if stdin is a terminal (interactive)
-    read -r -p "    Do you want to generate C++ code from .aidl files? [y/N] " response
-    case "$response" in
-      [yY][eE][sS]|[yY])
-        LOGI "Proceeding with C++ code generation..."
-        ;;
-      *)
-        LOGE "Aborting. Please restore generated files or use --force to regenerate."
-        exit 1
-        ;;
-    esac
-  else
-    LOGE "Non-interactive mode: cannot prompt for confirmation"
-    LOGE "Use --clean-aidl explicitly to regenerate tracked files"
-    exit 1
-  fi
+# Decide whether the generated sources need producing. The stamp records the
+# last successful generation; an .aidl newer than it means the output is stale.
+if [ "${CLEAN_AIDL}" -eq 1 ]; then
+  GEN_REASON="--clean-aidl requested"
+elif [ "${FORCE}" -eq 1 ]; then
+  GEN_REASON="--force requested"
+elif [ ! -f "${AIDL_STAMP}" ]; then
+  GEN_REASON="no generated sources present"
+elif [ -n "$(find "${FWMANAGER_AIDL_DIR}" -name '*.aidl' -newer "${AIDL_STAMP}" 2>/dev/null | head -n 1)" ]; then
+  GEN_REASON="an .aidl input is newer than the generated sources"
+else
+  GEN_REASON=""
+fi
+
+if [ -n "${GEN_REASON}" ]; then
+  LOGI "Generating C++ from .aidl (${GEN_REASON})..."
 
   # Set AIDL_BIN for the generate script (host tools, not target)
   export AIDL_BIN="${OUT_DIR}/host/bin/aidl"
 
   if [ ! -x "$AIDL_BIN" ]; then
     LOGE "AIDL compiler not found at $AIDL_BIN"
-    LOGE "Please build AIDL generator tool first"
+    LOGE "Build it with ./build-aidl-generator-tool.sh"
     exit 1
   fi
 
-  "${SCRIPT_DIR}/example/generate_cpp.sh"
+  "${SCRIPT_DIR}/example/generate_cpp.sh" --clean
+  touch "${AIDL_STAMP}"
   LOGI "✓ C++ code generation complete"
-  LOGW "⚠️  Remember to review and commit changes to generated files"
 else
-  LOGI "Using pre-generated AIDL C++ files from ${FWMANAGER_GEN_DIR}"
+  LOGI "Generated AIDL C++ is up to date in ${FWMANAGER_GEN_DIR}"
 fi
 
 # ------------------------------------------------------------------------------

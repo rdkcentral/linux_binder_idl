@@ -45,8 +45,16 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="${SCRIPT_DIR}"
 
-BUILD_DIR="${ROOT_DIR}/build-host"
-OUT_DIR="${ROOT_DIR}/out/host"
+# Overridable so a caller can build into its own workspace instead of the repo
+# tree, which is what a test needs to be isolated and repeatable.
+#
+# Deliberately NOT the same names build-linux-binder-aidl.sh uses. That script
+# invokes this one, so a caller who set BUILD_DIR/OUT_DIR to isolate a TARGET
+# build would have the host build inherit them and the two would share a tree -
+# host and target artifacts in one directory, with the target run reconfiguring
+# the host cache.
+BUILD_DIR="${HOST_BUILD_DIR:-${ROOT_DIR}/build-host}"
+OUT_DIR="${HOST_OUT_DIR:-${ROOT_DIR}/out/host}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 CLEAN_BUILD=false
 
@@ -90,16 +98,36 @@ echo "=========================================="
 
 if [ "$CLEAN_BUILD" = true ]; then
   echo "==> Cleaning all build artifacts and source directories..."
-  rm -rf "${BUILD_DIR}" 2>/dev/null || true
-  echo "    Cleaned: ${BUILD_DIR}"
-  rm -rf "${ROOT_DIR}/out" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/out"
-  rm -rf "${ROOT_DIR}/build-host" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/build-host"
-  rm -rf "${ROOT_DIR}/build-target" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/build-target"
-  rm -rf "${ROOT_DIR}/android" 2>/dev/null || true
-  echo "    Cleaned: ${ROOT_DIR}/android"
+  # `clean` exists so a user can get back to a COMPLETELY clean environment, so
+  # it takes the repository trees unconditionally - including android/, the
+  # cloned AOSP sources. Nothing here is conditional on how the build was
+  # directed: a clean that left something behind because of an environment
+  # variable would not be the thing this command is for.
+  #
+  # BUILD_DIR and OUT_DIR are cleaned as well as, not instead of, those trees.
+  # They are the same paths by default; when HOST_BUILD_DIR / HOST_OUT_DIR have
+  # redirected them they are extra ones, and leaving a redirected directory
+  # behind would be exactly the leftover state this command promises to remove.
+  _cleaned=""
+  clean_dir() {
+    [ -n "$1" ] || return
+    case " ${_cleaned} " in *" $1 "*) return ;; esac   # same path twice
+    _cleaned="${_cleaned} $1"
+    # Report only what was actually there. The default OUT_DIR sits inside out/,
+    # so it is already gone by the time this reaches it, and announcing a second
+    # removal of a path that no longer exists reads like the clean ran twice.
+    if [ -e "$1" ]; then
+      rm -rf "$1" 2>/dev/null || true
+      echo "    Cleaned: $1"
+    fi
+  }
+
+  clean_dir "${ROOT_DIR}/out"
+  clean_dir "${ROOT_DIR}/build-host"
+  clean_dir "${ROOT_DIR}/build-target"
+  clean_dir "${ROOT_DIR}/android"
+  clean_dir "${BUILD_DIR}"
+  clean_dir "${OUT_DIR}"
   echo "✅ Complete clean finished"
   exit 0
 fi

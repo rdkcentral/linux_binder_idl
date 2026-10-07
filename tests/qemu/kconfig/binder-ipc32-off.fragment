@@ -1,0 +1,13 @@
+# Select the modern binder wire protocol (version 8) on a 32-bit kernel.
+#
+# Apply IN ADDITION to binder.fragment for the 32-bit protocol-8 matrix entry
+# at 4.17 or older, together with patches/linux-4.9-binder-ipc32-prompt.patch.
+#
+# The patch is required, not optional. Upstream declares the symbol as a bare
+# `bool` with no prompt string, and a prompt-less symbol is not settable from a
+# config: kconfig discards this line and recomputes `default y`. The patch adds
+# the prompt that makes the line below take effect.
+#
+# From 4.18 the symbol does not exist and neither this fragment nor the patch is
+# used - binder.fragment alone yields protocol 8.
+# CONFIG_ANDROID_BINDER_IPC_32BIT is not set

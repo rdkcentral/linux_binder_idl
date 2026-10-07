@@ -4,10 +4,18 @@ This project aims to build and test the Android Binder for the Linux desktop env
 The Android 13 AOSP source code is cloned from `Google's` repositories. The Android tag
  is __*android-13.0.0_r74*__, and the code has been modified to make it compatible with Linux.
 The project is primarily designed to build the binder runtime libraries for embedded devices.
-It also provides the `aidl` compiler for the architecture team to generate interface code offline.
-The default binder libraries generated are 64-bit, but this can be overridden using CMake variables.
+It also provides the `aidl` compiler, a build-host tool that generates interface C++ from `.aidl`.
+The target ELF class follows the toolchain in `CC`/`CXX`, which is the only thing that decides it.
+The binder wire protocol does not follow the toolchain: it defaults to **8**, which every supported
+platform serves, and only a legacy platform states otherwise.
 
 **For comprehensive build documentation, see [BUILD.md](BUILD.md).**
+
+**For which switches to build with for a given target kernel, see [PROTOCOL.md](PROTOCOL.md).**
+
+**For what the generated C++ guarantees to its consumers, see [CODEGEN.md](CODEGEN.md).**
+A wire-protocol mismatch between the library and the kernel terminates the process at boot, so
+the switches have to be chosen from the target kernel's configuration.
 
 ---
 
@@ -45,8 +53,10 @@ The default binder libraries generated are 64-bit, but this can be overridden us
 - Linux Kernel 5.16.x with binder enabled (Tested with 5.16.20)
 - CMake 3.22.1 or later
 - GCC 11.2.0 or later (minimum GCC 9.4.0)
+- Python 3 with PyYAML (`python3-yaml`), for AIDL code generation
 
 **For detailed kernel configuration, runtime setup, and Yocto/BitBake integration, see [BUILD.md](BUILD.md).**
+**For the kernel-to-switch selection matrix, see [PROTOCOL.md](PROTOCOL.md).**
 
 ---
 
@@ -108,7 +118,7 @@ out/target/
 
 ## Build AIDL generator tool
 
-**Note:** The AIDL compiler is primarily used by the architecture team for offline interface code generation. Production Yocto/BitBake builds do NOT require building or installing the AIDL compiler (they use pre-generated sources).
+**Note:** The AIDL compiler runs on the build host. A Yocto/BitBake target recipe does not build or install it; the interface C++ it compiles is generated on the host, either once and committed or during the consumer's own build.
 
 ### Run below command to build aidl generator tool
 
@@ -201,7 +211,7 @@ All wrapper scripts support `--help` and `--clean` options:
 # Build examples (includes SDK build)
 ./build-binder-example.sh [--clean] [--clean-aidl]
 
-# Build AIDL compiler (architecture team only)
+# Build AIDL compiler (build host only)
 ./build-aidl-generator-tool.sh [--clean]
 ```
 
@@ -215,9 +225,13 @@ Development wrapper scripts (`build-*.sh`) automatically handle CMake variables.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BUILD_HOST_AIDL` | Build AIDL compiler (architecture team only) | `ON` |
-| `TARGET_LIB64_VERSION` | Build 64-bit libraries | Auto-detect |
-| `TARGET_LIB32_VERSION` | Build 32-bit libraries | `OFF` |
+| `BUILD_HOST_AIDL` | Build AIDL compiler (build host only) | `OFF` |
+| `BINDER_PROTOCOL` | Binder wire protocol: `7` or `8` | `8`, on every toolchain |
+| `TARGET_BITNESS` | Declare the target ELF class: `32` or `64` | follows the toolchain |
+
+`BINDER_IPC_32BIT` and the `TARGET_LIB32_VERSION` / `TARGET_LIB64_VERSION` pair
+are the deprecated spellings of the last two. They still work; see
+[BUILD.md](BUILD.md#deprecated-spellings).
 
 **See [BUILD.md](BUILD.md) for:**
 
@@ -258,7 +272,7 @@ rm -rf out/ build-target/ build-host/
 
 ## Output
 
-The default generated binder libs are 64-bit. This can be modified using `TARGET_LIB64_VERSION` or `TARGET_LIB32_VERSION` CMake variables.
+The generated binder libs take their ELF class from `CC` / `CXX`, so a 64-bit host compiler produces 64-bit libraries and a 32-bit cross-toolchain produces 32-bit ones. `TARGET_BITNESS` asserts which was expected; it does not select it.
 
 **Target SDK** (libraries for embedded devices) are installed to `out/target/`:
 
@@ -280,7 +294,7 @@ out/target/
         └── libfwmanager.so
 ```
 
-**Host AIDL Compiler** (architecture team only) is installed to `out/host/`:
+**Host AIDL Compiler** (build host only) is installed to `out/host/`:
 
 ```bash
 out/host/

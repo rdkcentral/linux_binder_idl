@@ -79,6 +79,21 @@ else()
     message(STATUS "HOST_AIDL_DIR explicitly set to ${HOST_AIDL_DIR}")
 endif()
 
+# The generated interface libraries install to the same prefix as the binder
+# runtime they link, so they need the same defaults. When this file is included
+# by CMakeLists.txt/.inc these are already set and both blocks are no-ops; when
+# a consumer uses it standalone they are what makes the install destination
+# below resolve to a real directory.
+if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
+    set(CMAKE_INSTALL_LIBDIR ${CMAKE_INSTALL_PREFIX}/lib)
+    message(STATUS "CMAKE_INSTALL_LIBDIR not set, defaulting to ${CMAKE_INSTALL_LIBDIR}")
+endif ()
+
+# Record the prefix in every installed artifact — see cmake/InstallRunpath.cmake.
+# Must precede the first add_library()/add_executable().
+include(${LINUX_BINDER_AIDL_ROOT}/cmake/InstallRunpath.cmake)
+binder_install_runpath()
+
 #######################################################################
 # Internal paths used by this helper
 #######################################################################
@@ -275,20 +290,6 @@ function(AddInterfaceLibrary aidl_target)
         message(STATUS "Using pre-generated sources for ${interface_name} v${interface_version} (${list_length} files)")
         set(source_files ${existing_sources})
     endif()
-    
-    # Post-process generated headers to add missing #include <mutex>
-    # AIDL code generator creates Bp*.h files that use std::mutex without including <mutex>
-    file(GLOB_RECURSE bp_headers "${include_dir}/**/Bp*.h")
-    foreach(header_file ${bp_headers})
-        file(READ "${header_file}" header_content)
-        # Only add if not already present
-        string(FIND "${header_content}" "#include <mutex>" has_mutex)
-        if(has_mutex EQUAL -1)
-            string(REGEX REPLACE "(#pragma once\n)" "\\1#include <mutex>\n" header_content "${header_content}")
-            file(WRITE "${header_file}" "${header_content}")
-        endif()
-    endforeach()
-
 
     message(VERBOSE "adding target ${aidl_target} as a library")
     add_library(

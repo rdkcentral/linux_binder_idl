@@ -1,0 +1,29 @@
+Make CONFIG_ANDROID_BINDER_IPC_32BIT settable on a 32-bit kernel.
+
+Upstream declares the symbol as a bare `bool` with no prompt string, so it is
+not user-configurable: kconfig discards whatever a defconfig or fragment says
+about it and recomputes it from `default y`. On a 32-bit kernel at 4.17 or
+older that makes the legacy binder wire protocol (version 7) unavoidable by
+configuration, even though the driver supports protocol 8 perfectly well and
+every 32-bit userspace built for protocol 8 needs it.
+
+Adding a prompt makes the symbol settable in both directions. `default y` is
+kept, so a kernel that says nothing about it behaves exactly as before and no
+existing configuration changes meaning. A platform moving to protocol 8 adds
+`# CONFIG_ANDROID_BINDER_IPC_32BIT is not set` to its defconfig, which now has
+an effect.
+
+Applies to 4.9 through 4.17. The symbol was removed upstream from 4.18, where
+protocol 8 is the only option and no patch is needed.
+
+--- a/drivers/android/Kconfig
++++ b/drivers/android/Kconfig
+@@ -21,7 +21,7 @@ config ANDROID_BINDER_IPC
+ 	  between said processes.
+ 
+ config ANDROID_BINDER_IPC_32BIT
+-	bool
++	bool "Use the legacy 32-bit binder wire protocol (version 7)"
+ 	depends on !64BIT && ANDROID_BINDER_IPC
+ 	default y
+ 	---help---

@@ -19,9 +19,14 @@ not a failure). The runner exits non-zero if any test fails.
 | `test_yocto_m4_regression.sh` | host AIDL build vs an old sourced `M4` (#30) |
 | `test_binder_4_9_fallbacks.sh` | binder builds against 4.9 kernel UAPI headers (#35) |
 | `test_cmake_min_version_compat.sh` | no CMake sub-command newer than the declared `cmake_minimum_required` (#24) |
+| `test_install_runpath.sh` | every installed library and executable records its install prefix as `RUNPATH`, so each layer loads its own libbinder (#62) |
+| `test_yocto_recipe_example.sh` | the reference recipe passes the current switches, checks its install, and matches the copy in `BUILD.md` |
+| `test_binder_protocol_derivation.py` | the optional `binder-protocol-from-kernel.inc` derives the protocol from a kernel `.config`, and its guards refuse a mismatch |
+| `test_servicemanager_secctx.sh` | on Linux, servicemanager registers without requesting callers' security contexts (#90) |
 | `test_interface_version_ordinal.py` | module-local snapshots emit the real interface VERSION ordinal (#32) |
+| `test_logger.py` | the host toolchain's logger needs only the standard library, logs to stderr and `fatal()` exits (#81) |
 | `test_surface_dump_diff.py` | `dump-surface` / `diff-surface` classification rule table (#27) |
-| `test_qemu_binder.sh` → [`qemu/`](qemu/) | binder **round-trip on a real kernel** under QEMU — the runtime gate for the kernel-floor / protocol / bitness work (#35/#36) |
+| `test_qemu_binder.sh` → [`qemu/`](qemu/) | binder **round-trip through `servicemanager` on a real kernel** under QEMU, every kernel AppArmor-only — the runtime gate for the kernel floor, protocol and bitness (#35/#36) and the security module (#90) |
 
 ## QEMU binder round-trip (`qemu/`)
 

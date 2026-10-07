@@ -1,0 +1,57 @@
+# servicemanager owns the binder context. Every binder process resolves names
+# through it, so nothing that uses binder can start before it has registered as
+# the context manager.
+#
+# THE BINDER DEVICE MUST EXIST BEFORE THIS UNIT RUNS. servicemanager opens
+# /dev/binder and claims the context with BINDER_SET_CONTEXT_MGR as its first
+# act; with no node there is nothing to claim and it exits. The device is a
+# prerequisite to depend on, not a condition to test for.
+#
+# Requires= is what makes it a prerequisite: systemd holds this unit until
+# dev-binder.device is active and does not start it at all if that never
+# happens. After= on its own would only order the two when something else had
+# already pulled the device into the transaction.
+#
+# WHICH unit provides it is platform-specific, so this reference only ORDERS
+# against both candidates and hard-requires neither. After= on a unit that does
+# not exist is harmless; Requires= on one is not, and the two routes name
+# different units:
+#
+#   static node, from CONFIG_ANDROID_BINDER_DEVICES   dev-binder.device
+#   binderfs, kernel 5.0+                             dev-binderfs.mount
+#                                                     (/dev/binder is a symlink
+#                                                     into the mount, and a
+#                                                     symlink has no .device
+#                                                     unit of its own)
+#
+# Add the Requires= line for the one your platform actually uses if you want
+# systemd to refuse to start this at all without it:
+#
+#     Requires=dev-binder.device        # or dev-binderfs.mount
+#
+# Until then the prerequisite is enforced by failing and retrying: servicemanager
+# exits when the node is absent, and Restart=always brings it back until the node
+# is there. StartLimitIntervalSec=0 is what makes "until" true - systemd's default
+# rate limit (5 starts in 10s) would put the unit permanently in failed state
+# after about five seconds, which is shorter than a late binderfs mount.
+#
+# There is deliberately no ConditionPathExists=/dev/binder. A failed condition
+# makes systemd SKIP a unit, and a skipped unit has not failed - so Restart=
+# never applies and nothing retries it. A node that appeared a moment later
+# would leave the device with no context manager for the rest of that boot,
+# silently, which is the failure this unit exists to prevent.
+
+[Unit]
+Description=Android Binder service manager
+Documentation=https://source.android.com/docs/core/architecture/hidl/binder-ipc
+After=dev-binder.device dev-binderfs.mount
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/servicemanager
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
