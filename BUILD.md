@@ -254,7 +254,15 @@ EXTRA_OECMAKE += " \
 # from ${D} rather than packaging an empty one.
 do_configure:prepend() {
     unset OECORE_NATIVE_SYSROOT OECORE_TARGET_SYSROOT
+    ${S}/clone-android-binder-repo.sh
 }
+
+# The binder sources: clone-android-binder-repo.sh fetches the specific
+# components linux_binder builds - libbinder, servicemanager and the support
+# libraries they need - at a pinned release into ${S}/android, and applies
+# patches/. It runs in do_configure, and Kirkstone gives network access only to
+# do_fetch unless a task asks for it.
+do_configure[network] = "1"
 
 do_install:append() {
     for f in ${libdir}/libbinder.so ${bindir}/servicemanager ${includedir}/binder/IBinder.h; do
@@ -1102,8 +1110,9 @@ and its systemd unit, [`example/yocto/files/servicemanager.service`](example/yoc
 [Integration with Yocto/Bitbake](#integration-with-yoctobitbake) explains each line. To move a
 legacy recipe onto it:
 
-- Remove the `setup-env.sh` sourcing and any `clone_android_binder_repo` call. CMake fetches the
-  AOSP sources itself during configure.
+- Remove the `setup-env.sh` sourcing and any `clone_android_binder_repo` call. Run
+  `${S}/clone-android-binder-repo.sh` from `do_configure:prepend` with `do_configure[network] = "1"`,
+  as the reference recipe does; Kirkstone blocks network access outside `do_fetch` otherwise.
 - Remove `BUILD_ENV_YOCTO`; setting it from a recipe has no effect.
 - Pass `-DBUILD_HOST_AIDL=OFF` and `-DBINDER_PROTOCOL=8`, or `7` on a row A platform
   (see [Which row is your platform?](#which-row-is-your-platform)).

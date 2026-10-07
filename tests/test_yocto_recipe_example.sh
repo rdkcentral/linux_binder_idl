@@ -31,7 +31,9 @@
 #      defconfig, which can request a symbol the kernel no longer has and have
 #      that request dropped in silence.
 #   3. CMake's own install rules run, so the package is not empty.
-#   4. BUILD.md's recipe block has not drifted from it. The doc inlines the
+#   4. It runs the binder source clone explicitly, with the network access Kirkstone
+#      requires for it.
+#   5. BUILD.md's recipe block has not drifted from it. The doc inlines the
 #      recipe for readability, and two copies of one file is how they diverge.
 #
 # Run: ./tests/test_yocto_recipe_example.sh
@@ -151,7 +153,24 @@ else
     fail "do_install does not check that libbinder.so reached \${D}"
 fi
 
-# 5. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
+# 5. The binder source clone is explicit and allowed network access. CMake would run
+#    the same script if android/ were missing, but inside do_configure, where
+#    Kirkstone - the release every RDK platform uses - blocks the network.
+#    The call must be inside do_configure:prepend - the task that is granted the
+#    network - so only that function's body is searched, not the whole recipe.
+CONFIGURE_PREPEND="$(printf '%s\n' "${ACTIVE}" | awk '/^do_configure:prepend\(\) *\{/ {f=1; next} f && /^\}/ {exit} f')"
+if printf '%s\n' "${CONFIGURE_PREPEND}" | grep -qF '${S}/clone-android-binder-repo.sh'; then
+    pass "do_configure:prepend runs clone-android-binder-repo.sh explicitly"
+else
+    fail "do_configure:prepend does not run clone-android-binder-repo.sh - the binder source clone is hidden inside CMake, or runs in a task without network access"
+fi
+if printf '%s\n' "${ACTIVE}" | grep -qE '^do_configure\[network\] = "1"'; then
+    pass "do_configure[network] = \"1\", so the clone works on Kirkstone"
+else
+    fail "no do_configure[network] = \"1\" - Kirkstone blocks the clone"
+fi
+
+# 6. BUILD.md has not drifted. Every non-blank line of the doc's bitbake block
 #    must appear in the recipe; the recipe may carry more (its licence header,
 #    SRC_URI, systemd) than the doc chooses to show.
 #
