@@ -1,0 +1,19 @@
+#####################################################################
+Date: Wed Nov 11 13:15:41 2026 +0100
+From: 1424396741302fb4722bdd63e19d84ab2475056d Thu Mar 17 19:48:10 2022
+Source: Comcast & Android OpenSource Project
+Subject: Fix the coverity high severity issues
+#####################################################################
+diff --git a/include/fmt/format-inl.h b/include/fmt/format-inl.h
+index 8f2fe73..49325ba 100644
+--- a/include/fmt/format-inl.h
++++ b/include/fmt/format-inl.h
+@@ -1415,7 +1415,7 @@ class bigint {
+ 
+   void square() {
+     basic_memory_buffer<bigit, bigits_capacity> n(std::move(bigits_));
+-    int num_bigits = static_cast<int>(bigits_.size());
++    int num_bigits = static_cast<int>(n.size());
+     int num_result_bigits = 2 * num_bigits;
+     bigits_.resize(to_unsigned(num_result_bigits));
+     using accumulator_t = conditional_t<FMT_USE_INT128, uint128_t, accumulator>;
