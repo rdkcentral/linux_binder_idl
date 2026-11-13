@@ -158,3 +158,16 @@ index 2ec2b20..34b7d47 100644
      call_log_function();
    } else {
      // If the buffer is not empty and we can't fit the rest of msg into it, write its contents.
+diff --git a/hex.cpp b/hex.cpp
+index a4b7715..731d405 100644
+--- a/hex.cpp
++++ b/hex.cpp
+@@ -16,6 +16,8 @@
+ 
+ #include "android-base/hex.h"
+ 
++#include <cstdint>
++
+ #include "android-base/logging.h"
+ 
+ namespace android {
