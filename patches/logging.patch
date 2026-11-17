@@ -1,8 +1,8 @@
 #####################################################################
-Date: Thu Nov 2 11:23:41 2023 +0100
+Date: Wed Nov 11 13:25:41 2026 +0100
 From: ec3daa6f52131c87da38e1c7be6b374e3ccf6e0d Thu Jan 26 02:19:15
 Source: Comcast & Android OpenSource Project
-Subject: Fix the compilation issues in the Linux environment
+Subject: Fix the compilation issues in the Linux environment & Coverity high severity issues
 #####################################################################
 diff --git a/liblog/include/cutils/list.h b/liblog/include/cutils/list.h
 new file mode 100644
@@ -269,6 +269,19 @@ index eee2778..f14c276 100644
 +#define UNUSED(x) (void)(x)
 +
  std::string& GetDefaultTag();
+diff --git a/liblog/logprint.cpp b/liblog/logprint.cpp
+index f83e58f..6f19b75 100644
+--- a/liblog/logprint.cpp
++++ b/liblog/logprint.cpp
+@@ -1487,7 +1487,7 @@ char* android_log_formatLogLine(AndroidLogFormat* p_format, char* defaultBuffer,
+   if (p_format->colored_output) {
+     prefixLen =
+         snprintf(prefixBuf, sizeof(prefixBuf), "\x1B[%dm", colorFromPri(entry->priority));
+-    prefixLen = std::min(prefixLen, sizeof(prefixBuf));
++    prefixLen = std::min(prefixLen, sizeof(prefixBuf) - 1);
+ 
+     const char suffixContents[] = "\x1B[0m";
+     strcpy(suffixBuf, suffixContents);
 diff --git a/liblog/properties.cpp b/liblog/properties.cpp
 index bd5f5e7..fd15054 100644
 --- a/liblog/properties.cpp
