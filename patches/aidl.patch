@@ -73,7 +73,7 @@ index 9ccad24..e25d889 100644
  
  class AidlLocation {
 diff --git a/generate_cpp.cpp b/generate_cpp.cpp
-index 988ac2b..c000705 100644
+index 988ac2b..a093fb3 100644
 --- a/generate_cpp.cpp
 +++ b/generate_cpp.cpp
 @@ -760,6 +760,9 @@ void GenerateClientClassDecl(CodeWriter& out, const AidlInterface& interface,
@@ -99,3 +99,17 @@ index 988ac2b..c000705 100644
    }
    GenerateNestedTypeDecls(out, interface, typenames, options);
    GenerateConstantDeclarations(out, interface, typenames);
+@@ -1278,8 +1282,11 @@ void GenerateHeaderIncludes(CodeWriter& out, const AidlDefinedType& defined_type
+   }
+   out << "\n";
+   if (v.includes.count("cassert")) {
+-    // TODO(b/31559095) bionic on host should define __assert2
+-    out << "#ifndef __BIONIC__\n#define __assert2(a,b,c,d) ((void)0)\n#endif\n\n";
++    // TODO(b/31559095) bionic on host should define __assert2. Elsewhere,
++    // map it to the C library's [[noreturn]] __assert_fail (glibc, musl),
++    // so an unreachable union tag aborts instead of running off the end.
++    out << "#ifndef __BIONIC__\n#include <assert.h>\n"
++        << "#define __assert2(a,b,c,d) __assert_fail((d),(a),(b),(c))\n#endif\n\n";
+   }
+ }
+ 
