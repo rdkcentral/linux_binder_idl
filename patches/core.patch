@@ -12,7 +12,7 @@ index 2ba1eb0..7cb179d 100644
  #include <time.h>
  #include <unistd.h>
  
-+#ifdef __ANDOIRD__
++#ifdef __ANDROID__
  #include <utils/Compat.h>
 +#endif
  
