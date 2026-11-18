@@ -113,12 +113,13 @@ check_warnings_errors() {
     local log_file="$1"
     local description="$2"
 
-    # Build diagnostics only. A line that starts with a bare "warning: " is
-    # a tool notice with no source location, such as git's "refs/tags/<tag>
-    # <sha> is not a commit!" for the shallow AOSP clones, not a build warning.
+    # Build diagnostics only. git prints "warning: refs/tags/<tag> <sha> is
+    # not a commit!" for the shallow AOSP clones; that notice is not a build
+    # warning. Other bare "warning:" lines (e.g. clang's unknown-option
+    # warnings) still count.
     local diagnostics
     diagnostics=$(grep -iE "warning:|error:" "$log_file" 2>/dev/null \
-        | grep -vE "^warning: " || true)
+        | grep -vE "^warning: refs/tags/[^ ]+ [0-9a-f]+ is not a commit!$" || true)
 
     local warning_count
     local error_count
