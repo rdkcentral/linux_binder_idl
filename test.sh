@@ -113,23 +113,24 @@ check_warnings_errors() {
     local log_file="$1"
     local description="$2"
 
+    # Build diagnostics only. A line that starts with a bare "warning: " is
+    # a tool notice with no source location, such as git's "refs/tags/<tag>
+    # <sha> is not a commit!" for the shallow AOSP clones, not a build warning.
+    local diagnostics
+    diagnostics=$(grep -iE "warning:|error:" "$log_file" 2>/dev/null \
+        | grep -vE "^warning: " || true)
+
     local warning_count
     local error_count
-    warning_count=$(grep -ciE "warning:" "$log_file" 2>/dev/null || echo "0")
-    error_count=$(grep -ciE "error:" "$log_file" 2>/dev/null || echo "0")
-
-    # Remove any whitespace/newlines
-    warning_count=$(echo "$warning_count" | tr -d '\n\r ')
-    error_count=$(echo "$error_count" | tr -d '\n\r ')
-    warning_count=${warning_count:-0}
-    error_count=${error_count:-0}
+    warning_count=$(printf '%s\n' "$diagnostics" | grep -ciE "warning:" || true)
+    error_count=$(printf '%s\n' "$diagnostics" | grep -ciE "error:" || true)
 
     if [ "$error_count" -eq 0 ] && [ "$warning_count" -eq 0 ]; then
         print_pass "$description - No warnings or errors"
         return 0
     else
         print_fail "$description - warnings: $warning_count, errors: $error_count"
-        grep -iE "warning:|error:" "$log_file" 2>/dev/null | head -10 | tee -a "${TEST_LOG}"
+        printf '%s\n' "$diagnostics" | head -10 | tee -a "${TEST_LOG}"
         return 1
     fi
 }
