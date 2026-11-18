@@ -58,6 +58,109 @@ index afab3a2..0ff5f3f 100644
  template <typename T>
  bool processGuard(const OverflowGuard<T>& guard, const AidlConstantValue& context) {
    if (guard.Overflowed()) {
+diff --git a/aidl_to_cpp_common.cpp b/aidl_to_cpp_common.cpp
+index 682b6c8..3dfccb0 100644
+--- a/aidl_to_cpp_common.cpp
++++ b/aidl_to_cpp_common.cpp
+@@ -248,10 +248,10 @@ std::string GenerateEnumValues(const AidlEnumDeclaration& enum_decl,
+       "::" + GetQualifiedName(enum_decl);
+   const auto size = enum_decl.GetEnumerators().size();
+   std::ostringstream code;
+-  code << "#pragma clang diagnostic push\n";
+-  code << "#pragma clang diagnostic ignored \"-Wc++17-extensions\"\n";
++  code << "#pragma GCC diagnostic push\n";
++  code << "#ifdef __clang__\n#pragma clang diagnostic ignored \"-Wc++17-extensions\"\n#endif\n";
+   if (IsEnumDeprecated(enum_decl)) {
+-    code << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++    code << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+   }
+   code << "template <>\n";
+   code << "constexpr inline std::array<" << fq_name << ", " << size << ">";
+@@ -260,7 +260,7 @@ std::string GenerateEnumValues(const AidlEnumDeclaration& enum_decl,
+     code << "  " << fq_name << "::" << enumerator->GetName() << ",\n";
+   }
+   code << "};\n";
+-  code << "#pragma clang diagnostic pop\n";
++  code << "#pragma GCC diagnostic pop\n";
+   return code.str();
+ }
+ 
+@@ -272,8 +272,8 @@ std::string GenerateEnumToString(const AidlEnumDeclaration& enum_decl,
+   std::ostringstream code;
+   bool is_enum_deprecated = IsEnumDeprecated(enum_decl);
+   if (is_enum_deprecated) {
+-    code << "#pragma clang diagnostic push\n";
+-    code << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++    code << "#pragma GCC diagnostic push\n";
++    code << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+   }
+   code << "[[nodiscard]] static inline std::string toString(" + q_name + " val) {\n";
+   code << "  switch(val) {\n";
+@@ -295,7 +295,7 @@ std::string GenerateEnumToString(const AidlEnumDeclaration& enum_decl,
+   code << "  }\n";
+   code << "}\n";
+   if (is_enum_deprecated) {
+-    code << "#pragma clang diagnostic pop\n";
++    code << "#pragma GCC diagnostic pop\n";
+   }
+   return code.str();
+ }
+@@ -426,14 +426,14 @@ void GenerateToString(CodeWriter& out, const AidlUnionDecl& parcelable) {
+   out << "switch (getTag()) {\n";
+   for (const auto& f : parcelable.GetFields()) {
+     if (f->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     const string tag = f->GetName();
+     out << "case " << tag << ": os << \"" << tag << ": \" << "
+         << "::android::internal::ToString(get<" + tag + ">()); break;\n";
+     if (f->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
+@@ -659,8 +659,8 @@ void UnionWriter::ReadFromParcel(CodeWriter& out, const ParcelWriterContext& ctx
+   out << fmt::format("switch (static_cast<Tag>({})) {{\n", tag);
+   for (const auto& variable : decl.GetFields()) {
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     out << fmt::format("case {}: {{\n", variable->GetName());
+     out.Indent();
+@@ -682,7 +682,7 @@ void UnionWriter::ReadFromParcel(CodeWriter& out, const ParcelWriterContext& ctx
+     out << fmt::format("return {}; }}\n", ctx.status_ok);
+     out.Dedent();
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
+@@ -705,14 +705,14 @@ void UnionWriter::WriteToParcel(CodeWriter& out, const ParcelWriterContext& ctx)
+   out << "switch (getTag()) {\n";
+   for (const auto& variable : decl.GetFields()) {
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     out << fmt::format("case {}: return ", variable->GetName());
+     ctx.write_func(out, "get<" + variable->GetName() + ">()", variable->GetType());
+     out << ";\n";
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
 diff --git a/location.h b/location.h
 index 9ccad24..e25d889 100644
 --- a/location.h
@@ -73,9 +176,29 @@ index 9ccad24..e25d889 100644
  
  class AidlLocation {
 diff --git a/generate_cpp.cpp b/generate_cpp.cpp
-index 988ac2b..a093fb3 100644
+index 988ac2b..81f0c69 100644
 --- a/generate_cpp.cpp
 +++ b/generate_cpp.cpp
+@@ -571,8 +571,8 @@ void GenerateServerOnTransact(CodeWriter& out, const AidlInterface& interface,
+                     std::any_of(interface.GetMethods().begin(), interface.GetMethods().end(),
+                                 [](const auto& m) { return m->IsDeprecated(); });
+   if (deprecated) {
+-    out << "#pragma clang diagnostic push\n";
+-    out << "#pragma clang diagnostic ignored \"-Wdeprecated\"\n";
++    out << "#pragma GCC diagnostic push\n";
++    out << "#pragma GCC diagnostic ignored \"-Wdeprecated\"\n";
+     out << "\n";
+   }
+ 
+@@ -625,7 +625,7 @@ void GenerateServerOnTransact(CodeWriter& out, const AidlInterface& interface,
+   out << "\n";
+ 
+   if (deprecated) {
+-    out << "#pragma clang diagnostic pop\n";
++    out << "#pragma GCC diagnostic pop\n";
+     out << "\n";
+   }
+ }
 @@ -760,6 +760,9 @@ void GenerateClientClassDecl(CodeWriter& out, const AidlInterface& interface,
  void GenerateClientHeader(CodeWriter& out, const AidlInterface& interface,
                            const AidlTypenames& typenames, const Options& options) {

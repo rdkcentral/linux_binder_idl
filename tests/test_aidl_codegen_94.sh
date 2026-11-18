@@ -22,9 +22,12 @@
 #   1. Constant expressions are overflow-checked at their own width: 64-bit
 #      arithmetic that fits in 64 bits generates with the right value, and
 #      32-bit overflow is still rejected.
-#   2. A generated interface header compiles with -Wall -Wextra -Werror at
-#      C++17 (HASHVALUE is const char*), and a client that takes VERSION by
-#      reference links (VERSION is inline).
+#   2. Generated code compiles with -Wall -Wextra -Werror at C++17 against
+#      the SDK headers on the normal include path: an interface (HASHVALUE is
+#      const char*), an enum (no bare clang pragmas), a union (its unreachable
+#      branches end in a [[noreturn]] call), and the SDK headers themselves
+#      (no clang-only attributes). A client that takes VERSION by reference
+#      links (VERSION is inline).
 #
 # Uses the built host generator (out/host/bin/aidl) and the target SDK
 # (out/target). Skips cleanly (exit 0) when either has not been built, or when
@@ -83,7 +86,12 @@ else
 fi
 
 # 2. Generated header: -Werror at C++17, and VERSION usable by reference.
-printf 'package com.x;\ninterface IIdent { void ping(); }\n' > "${WORK}/aidl/com/x/IIdent.aidl"
+printf 'package com.x;\n@Backing(type="int") enum Mode { A = 0, B = 1 }\n' > "${WORK}/aidl/com/x/Mode.aidl"
+printf 'package com.x;\nimport com.x.Mode;\nunion Val { int a; long b; Mode m; }\n' > "${WORK}/aidl/com/x/Val.aidl"
+printf 'package com.x;\nimport com.x.Val;\ninterface IIdent { Val get(); }\n' > "${WORK}/aidl/com/x/IIdent.aidl"
+for f in Mode Val; do
+    gen "${WORK}/aidl/com/x/${f}.aidl" > "${WORK}/${f}.log" 2>&1 || { fail "${f} does not generate"; exit 1; }
+done
 if ! gen --version=1 --hash=abc123 "${WORK}/aidl/com/x/IIdent.aidl" > "${WORK}/ident.log" 2>&1; then
     fail "versioned interface does not generate: $(tail -1 "${WORK}/ident.log")"
     exit 1
@@ -97,22 +105,27 @@ int pick(int32_t v) { return std::max(com::x::IIdent::VERSION, v); }  // ODR-use
 const char* hash() { return com::x::IIdent::HASHVALUE; }
 int main(int argc, char**) { return pick(argc) == 1 && hash()[0] == 'a' ? 0 : 1; }
 CPP
-# The SDK headers are included as system headers: their own clang-only
-# attributes are #101, not this test.
-FLAGS=(-std=c++17 -Wall -Wextra -Werror -I "${WORK}/hdr" -isystem "${SDK}/include")
-if "${CXX}" "${FLAGS[@]}" -c "${WORK}/src/com/x/IIdent.cpp" -o "${WORK}/IIdent.o" > "${WORK}/cc.log" 2>&1 \
-    && "${CXX}" "${FLAGS[@]}" -c "${WORK}/client.cpp" -o "${WORK}/client.o" >> "${WORK}/cc.log" 2>&1; then
-    pass "generated interface compiles with -Wall -Wextra -Werror at C++17"
+FLAGS=(-std=c++17 -Wall -Wextra -Werror -I "${WORK}/hdr" -I "${SDK}/include")
+CC_OK=1
+for src in IIdent Val Mode; do
+    [ -f "${WORK}/src/com/x/${src}.cpp" ] || continue
+    "${CXX}" "${FLAGS[@]}" -c "${WORK}/src/com/x/${src}.cpp" -o "${WORK}/${src}.o" >> "${WORK}/cc.log" 2>&1 || CC_OK=0
+done
+"${CXX}" "${FLAGS[@]}" -c "${WORK}/client.cpp" -o "${WORK}/client.o" >> "${WORK}/cc.log" 2>&1 || CC_OK=0
+if [ "${CC_OK}" -eq 1 ]; then
+    pass "generated interface, enum and union compile with -Wall -Wextra -Werror at C++17"
 else
-    fail "generated interface does not compile cleanly: $(grep -m1 'error' "${WORK}/cc.log")"
+    fail "generated code does not compile cleanly: $(grep -m1 'error' "${WORK}/cc.log")"
 fi
 
 # Built without -Werror, so the link check stands on its own.
-if "${CXX}" -std=c++17 -w -I "${WORK}/hdr" -isystem "${SDK}/include" -c "${WORK}/src/com/x/IIdent.cpp" \
+if "${CXX}" -std=c++17 -w -I "${WORK}/hdr" -I "${SDK}/include" -c "${WORK}/src/com/x/IIdent.cpp" \
         -o "${WORK}/IIdent_l.o" >> "${WORK}/cc.log" 2>&1 \
-    && "${CXX}" -std=c++17 -w -I "${WORK}/hdr" -isystem "${SDK}/include" -c "${WORK}/client.cpp" \
+    && "${CXX}" -std=c++17 -w -I "${WORK}/hdr" -I "${SDK}/include" -c "${WORK}/src/com/x/Val.cpp" \
+        -o "${WORK}/Val_l.o" >> "${WORK}/cc.log" 2>&1 \
+    && "${CXX}" -std=c++17 -w -I "${WORK}/hdr" -I "${SDK}/include" -c "${WORK}/client.cpp" \
         -o "${WORK}/client_l.o" >> "${WORK}/cc.log" 2>&1; then
-    if "${CXX}" "${WORK}/IIdent_l.o" "${WORK}/client_l.o" -L "${SDK}/lib" -lbinder -lutils -llog -lbase -lcutils \
+    if "${CXX}" "${WORK}/IIdent_l.o" "${WORK}/Val_l.o" "${WORK}/client_l.o" -L "${SDK}/lib" -lbinder -lutils -llog -lbase -lcutils \
         -Wl,-rpath,"${SDK}/lib" -o "${WORK}/client" > "${WORK}/ld.log" 2>&1; then
         if "${WORK}/client"; then
             pass "client taking VERSION by reference links and runs"

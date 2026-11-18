@@ -126,7 +126,7 @@ repository's `develop`.
 | BINDER-F-002 | Byte-identical output for identical input at a given generator version | **Met** |
 | BINDER-F-003 | Generated output identifies the generator version that produced it | **Not met** |
 | BINDER-F-004 | Binder helper headers emitted only for interfaces | **Not met** — #29 |
-| BINDER-F-005 | Generated code compiles without diagnostics under `-Werror` at C++17 | **Not met** — #101 |
+| BINDER-F-005 | Generated code compiles without diagnostics under `-Werror` at C++17 | **Met** — `tests/test_aidl_codegen_94.sh` |
 
 ---
 
@@ -139,7 +139,6 @@ a design choice.
 |---|---|---|
 | Documentation comments are stripped | Generated headers carry no API documentation, so IDE tooltips are empty and a Doxygen run over the headers yields structure only | #28 |
 | `Bn*`/`Bp*` headers emitted for enums and parcelables | Helper headers that no caller or implementer uses | #29 |
-| Unguarded `#pragma clang diagnostic` in generated enum headers | gcc reports an unknown pragma, so code using an enum fails `-Wall -Werror` | #101 |
 
 ---
 

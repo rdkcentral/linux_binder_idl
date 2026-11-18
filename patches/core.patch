@@ -127,9 +127,18 @@ index 7a4a345..9b161ba 100644
  
  namespace android {
 diff --git a/libutils/include/utils/Vector.h b/libutils/include/utils/Vector.h
-index be35ea2..5326706 100644
+index be35ea2..7c9716f 100644
 --- a/libutils/include/utils/Vector.h
 +++ b/libutils/include/utils/Vector.h
+@@ -30,7 +30,7 @@
+ /*
+  * Used to exclude some functions from CFI.
+  */
+-#if __has_attribute(no_sanitize)
++#if defined(__clang__) && __has_attribute(no_sanitize)
+ #define UTILS_VECTOR_NO_CFI __attribute__((no_sanitize("cfi")))
+ #else
+ #define UTILS_VECTOR_NO_CFI
 @@ -256,7 +256,11 @@ Vector<TYPE>& Vector<TYPE>::operator = (const Vector<TYPE>& rhs) {
  
  template<class TYPE> inline
