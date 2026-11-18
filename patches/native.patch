@@ -197,17 +197,19 @@ index 3cfe529..e2e43d1 100644
      return Status::ok();
  }
 diff --git a/libs/binder/IMemory.cpp b/libs/binder/IMemory.cpp
-index c6b0cb7..6e3284e 100644
+index c6b0cb7..3403454 100644
 --- a/libs/binder/IMemory.cpp
 +++ b/libs/binder/IMemory.cpp
-@@ -17,7 +17,11 @@
+@@ -17,7 +17,13 @@
  #define LOG_TAG "IMemory"
  
  #include <atomic>
 +#if !defined(__linux__)
  #include <stdatomic.h>
 +#else
-+using namespace std;
++using std::memory_order_acquire;
++using std::memory_order_relaxed;
++using std::memory_order_release;
 +#endif
  
  #include <fcntl.h>
@@ -432,6 +434,22 @@ index 19ad5e6..3df8d68 100644
  
  // ---------------------------------------------------------------------------
  namespace android {
+diff --git a/libs/binder/include/binder/IBinder.h b/libs/binder/include/binder/IBinder.h
+index 43fc5ff..303f8c6 100644
+--- a/libs/binder/include/binder/IBinder.h
++++ b/libs/binder/include/binder/IBinder.h
+@@ -48,7 +48,11 @@ class IShellCallback;
+  * (method calls, property get and set) is down through a low-level
+  * protocol implemented on top of the transact() API.
+  */
++#if defined(__clang__)
+ class [[clang::lto_visibility_public]] IBinder : public virtual RefBase
++#else
++class IBinder : public virtual RefBase
++#endif
+ {
+ public:
+     enum {
 diff --git a/libs/binder/include/binder/Parcel.h b/libs/binder/include/binder/Parcel.h
 index e2b2c51..a73685e 100644
 --- a/libs/binder/include/binder/Parcel.h
@@ -535,3 +553,20 @@ index a579442..47fb4c8 100644
  #include <map>
  #include <optional>
  #include <thread>
+diff --git a/libs/binder/ndk/include_cpp/android/binder_to_string.h b/libs/binder/ndk/include_cpp/android/binder_to_string.h
+index ef71a81..0f211f7 100644
+--- a/libs/binder/ndk/include_cpp/android/binder_to_string.h
++++ b/libs/binder/ndk/include_cpp/android/binder_to_string.h
+@@ -162,7 +162,12 @@ std::string ToString(const _T& t) {
+     } else if constexpr (std::is_same_v<bool, _T>) {
+         return t ? "true" : "false";
+     } else if constexpr (std::is_same_v<char16_t, _T>) {
++        // codecvt is deprecated in C++17 with no replacement yet; suppress the
++        // warning as upstream does (b/244494451), for gcc and clang alike.
++        _Pragma("GCC diagnostic push")
++        _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+         return std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t>().to_bytes(t);
++        _Pragma("GCC diagnostic pop")
+     } else if constexpr (std::is_arithmetic_v<_T>) {
+         return std::to_string(t);
+     } else if constexpr (std::is_same_v<std::string, _T>) {

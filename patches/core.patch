@@ -12,7 +12,7 @@ index 2ba1eb0..7cb179d 100644
  #include <time.h>
  #include <unistd.h>
  
-+#ifdef __ANDOIRD__
++#ifdef __ANDROID__
  #include <utils/Compat.h>
 +#endif
  
@@ -22,13 +22,26 @@ diff --git a/libcutils/include/cutils/atomic.h b/libcutils/include/cutils/atomic
 index 0c88bfe..6f8df41 100644
 --- a/libcutils/include/cutils/atomic.h
 +++ b/libcutils/include/cutils/atomic.h
-@@ -19,7 +19,12 @@
+@@ -19,7 +19,25 @@
  
  #include <stdint.h>
  #include <sys/types.h>
 +#ifdef __cplusplus
 +#include <atomic>
-+using namespace std;
++using std::atomic_compare_exchange_strong_explicit;
++using std::atomic_fetch_add_explicit;
++using std::atomic_fetch_and_explicit;
++using std::atomic_fetch_or_explicit;
++using std::atomic_fetch_sub_explicit;
++using std::atomic_int_least32_t;
++using std::atomic_load_explicit;
++using std::atomic_signal_fence;
++using std::atomic_store_explicit;
++using std::atomic_thread_fence;
++using std::memory_order_acquire;
++using std::memory_order_relaxed;
++using std::memory_order_release;
++using std::memory_order_seq_cst;
 +#else
  #include <stdatomic.h>
 +#endif
@@ -45,7 +58,7 @@ index 98ae0d4..7c9ab1d 100644
  #include <inttypes.h>
 +#ifdef __cplusplus
 +#include <atomic>
-+using namespace std;
++using std::atomic_bool;
 +#else
  #include <stdatomic.h>
 +#endif
@@ -114,9 +127,18 @@ index 7a4a345..9b161ba 100644
  
  namespace android {
 diff --git a/libutils/include/utils/Vector.h b/libutils/include/utils/Vector.h
-index be35ea2..5326706 100644
+index be35ea2..7c9716f 100644
 --- a/libutils/include/utils/Vector.h
 +++ b/libutils/include/utils/Vector.h
+@@ -30,7 +30,7 @@
+ /*
+  * Used to exclude some functions from CFI.
+  */
+-#if __has_attribute(no_sanitize)
++#if defined(__clang__) && __has_attribute(no_sanitize)
+ #define UTILS_VECTOR_NO_CFI __attribute__((no_sanitize("cfi")))
+ #else
+ #define UTILS_VECTOR_NO_CFI
 @@ -256,7 +256,11 @@ Vector<TYPE>& Vector<TYPE>::operator = (const Vector<TYPE>& rhs) {
  
  template<class TYPE> inline

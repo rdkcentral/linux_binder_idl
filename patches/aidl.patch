@@ -23,43 +23,144 @@ index 2663295d..42c291c3 100644
    }
 
 diff --git a/aidl_const_expressions.cpp b/aidl_const_expressions.cpp
-index afab3a2..b73d7eb 100644
+index afab3a2..0ff5f3f 100644
 --- a/aidl_const_expressions.cpp
 +++ b/aidl_const_expressions.cpp
-@@ -62,12 +62,20 @@ class OverflowGuard {
+@@ -131,6 +131,31 @@ class OverflowGuard {
+   bool mOverflowed = false;
+ };
  
-   T operator+(T o) {
-     T out;
-+#ifdef __linux__
-+    mOverflowed = __builtin_add_overflow(mValue, o, reinterpret_cast<int*>(&out));
-+#else
-     mOverflowed = __builtin_add_overflow(mValue, o, &out);
-+#endif
-     return out;
++// some compilers don't provide __builtin_add_overflow for bool
++// see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=71479
++template <>
++bool OverflowGuard<bool>::operator+(bool o) {
++  if (mValue && o) {
++    mOverflowed = true;
++    return false;
++  }
++  return mValue || o;
++}
++
++template <>
++bool OverflowGuard<bool>::operator-(bool o) {
++  if (!mValue && o) {
++    mOverflowed = true;
++    return true;
++  }
++  return mValue && !o;
++}
++
++template <>
++bool OverflowGuard<bool>::operator*(bool o) {
++  return mValue && o;
++}
++
+ template <typename T>
+ bool processGuard(const OverflowGuard<T>& guard, const AidlConstantValue& context) {
+   if (guard.Overflowed()) {
+diff --git a/aidl_to_cpp_common.cpp b/aidl_to_cpp_common.cpp
+index 682b6c8..3dfccb0 100644
+--- a/aidl_to_cpp_common.cpp
++++ b/aidl_to_cpp_common.cpp
+@@ -248,10 +248,10 @@ std::string GenerateEnumValues(const AidlEnumDeclaration& enum_decl,
+       "::" + GetQualifiedName(enum_decl);
+   const auto size = enum_decl.GetEnumerators().size();
+   std::ostringstream code;
+-  code << "#pragma clang diagnostic push\n";
+-  code << "#pragma clang diagnostic ignored \"-Wc++17-extensions\"\n";
++  code << "#pragma GCC diagnostic push\n";
++  code << "#ifdef __clang__\n#pragma clang diagnostic ignored \"-Wc++17-extensions\"\n#endif\n";
+   if (IsEnumDeprecated(enum_decl)) {
+-    code << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++    code << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
    }
-   T operator-(T o) {
-     T out;
-+#ifdef __linux__
-+    mOverflowed = __builtin_sub_overflow(mValue, o, reinterpret_cast<int*>(&out));
-+#else
-     mOverflowed = __builtin_sub_overflow(mValue, o, &out);
-+#endif
-     return out;
+   code << "template <>\n";
+   code << "constexpr inline std::array<" << fq_name << ", " << size << ">";
+@@ -260,7 +260,7 @@ std::string GenerateEnumValues(const AidlEnumDeclaration& enum_decl,
+     code << "  " << fq_name << "::" << enumerator->GetName() << ",\n";
    }
-   T operator*(T o) {
-@@ -79,8 +87,12 @@ class OverflowGuard {
-     // concerned about overflows elsewhere in the compiler in addition to
-     // those in interfaces.
-     out = mValue * o;
-+#else
-+#ifdef __linux__
-+    mOverflowed = __builtin_mul_overflow(mValue, o, reinterpret_cast<int*>(&out));
- #else
-     mOverflowed = __builtin_mul_overflow(mValue, o, &out);
-+#endif
- #endif
-     return out;
+   code << "};\n";
+-  code << "#pragma clang diagnostic pop\n";
++  code << "#pragma GCC diagnostic pop\n";
+   return code.str();
+ }
+ 
+@@ -272,8 +272,8 @@ std::string GenerateEnumToString(const AidlEnumDeclaration& enum_decl,
+   std::ostringstream code;
+   bool is_enum_deprecated = IsEnumDeprecated(enum_decl);
+   if (is_enum_deprecated) {
+-    code << "#pragma clang diagnostic push\n";
+-    code << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++    code << "#pragma GCC diagnostic push\n";
++    code << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
    }
+   code << "[[nodiscard]] static inline std::string toString(" + q_name + " val) {\n";
+   code << "  switch(val) {\n";
+@@ -295,7 +295,7 @@ std::string GenerateEnumToString(const AidlEnumDeclaration& enum_decl,
+   code << "  }\n";
+   code << "}\n";
+   if (is_enum_deprecated) {
+-    code << "#pragma clang diagnostic pop\n";
++    code << "#pragma GCC diagnostic pop\n";
+   }
+   return code.str();
+ }
+@@ -426,14 +426,14 @@ void GenerateToString(CodeWriter& out, const AidlUnionDecl& parcelable) {
+   out << "switch (getTag()) {\n";
+   for (const auto& f : parcelable.GetFields()) {
+     if (f->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     const string tag = f->GetName();
+     out << "case " << tag << ": os << \"" << tag << ": \" << "
+         << "::android::internal::ToString(get<" + tag + ">()); break;\n";
+     if (f->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
+@@ -659,8 +659,8 @@ void UnionWriter::ReadFromParcel(CodeWriter& out, const ParcelWriterContext& ctx
+   out << fmt::format("switch (static_cast<Tag>({})) {{\n", tag);
+   for (const auto& variable : decl.GetFields()) {
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     out << fmt::format("case {}: {{\n", variable->GetName());
+     out.Indent();
+@@ -682,7 +682,7 @@ void UnionWriter::ReadFromParcel(CodeWriter& out, const ParcelWriterContext& ctx
+     out << fmt::format("return {}; }}\n", ctx.status_ok);
+     out.Dedent();
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
+@@ -705,14 +705,14 @@ void UnionWriter::WriteToParcel(CodeWriter& out, const ParcelWriterContext& ctx)
+   out << "switch (getTag()) {\n";
+   for (const auto& variable : decl.GetFields()) {
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic push\n";
+-      out << "#pragma clang diagnostic ignored \"-Wdeprecated-declarations\"\n";
++      out << "#pragma GCC diagnostic push\n";
++      out << "#pragma GCC diagnostic ignored \"-Wdeprecated-declarations\"\n";
+     }
+     out << fmt::format("case {}: return ", variable->GetName());
+     ctx.write_func(out, "get<" + variable->GetName() + ">()", variable->GetType());
+     out << ";\n";
+     if (variable->IsDeprecated()) {
+-      out << "#pragma clang diagnostic pop\n";
++      out << "#pragma GCC diagnostic pop\n";
+     }
+   }
+   out << "}\n";
 diff --git a/location.h b/location.h
 index 9ccad24..e25d889 100644
 --- a/location.h
@@ -75,9 +176,29 @@ index 9ccad24..e25d889 100644
  
  class AidlLocation {
 diff --git a/generate_cpp.cpp b/generate_cpp.cpp
-index 988ac2b..c000705 100644
+index 988ac2b..81f0c69 100644
 --- a/generate_cpp.cpp
 +++ b/generate_cpp.cpp
+@@ -571,8 +571,8 @@ void GenerateServerOnTransact(CodeWriter& out, const AidlInterface& interface,
+                     std::any_of(interface.GetMethods().begin(), interface.GetMethods().end(),
+                                 [](const auto& m) { return m->IsDeprecated(); });
+   if (deprecated) {
+-    out << "#pragma clang diagnostic push\n";
+-    out << "#pragma clang diagnostic ignored \"-Wdeprecated\"\n";
++    out << "#pragma GCC diagnostic push\n";
++    out << "#pragma GCC diagnostic ignored \"-Wdeprecated\"\n";
+     out << "\n";
+   }
+ 
+@@ -625,7 +625,7 @@ void GenerateServerOnTransact(CodeWriter& out, const AidlInterface& interface,
+   out << "\n";
+ 
+   if (deprecated) {
+-    out << "#pragma clang diagnostic pop\n";
++    out << "#pragma GCC diagnostic pop\n";
+     out << "\n";
+   }
+ }
 @@ -760,6 +760,9 @@ void GenerateClientClassDecl(CodeWriter& out, const AidlInterface& interface,
  void GenerateClientHeader(CodeWriter& out, const AidlInterface& interface,
                            const AidlTypenames& typenames, const Options& options) {
@@ -93,11 +214,25 @@ index 988ac2b..c000705 100644
    out << "DECLARE_META_INTERFACE(" << ClassName(interface, ClassNames::BASE) << ")\n";
    if (options.Version() > 0) {
 -    out << "const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
-+    out << "static const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
++    out << "static inline const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
    }
    if (!options.Hash().empty()) {
      out << "const std::string HASH = \"" << options.Hash() << "\";\n";
-+    out << "static constexpr char* HASHVALUE = \"" << options.Hash() << "\";\n";
++    out << "static constexpr const char* HASHVALUE = \"" << options.Hash() << "\";\n";
    }
    GenerateNestedTypeDecls(out, interface, typenames, options);
    GenerateConstantDeclarations(out, interface, typenames);
+@@ -1278,8 +1282,11 @@ void GenerateHeaderIncludes(CodeWriter& out, const AidlDefinedType& defined_type
+   }
+   out << "\n";
+   if (v.includes.count("cassert")) {
+-    // TODO(b/31559095) bionic on host should define __assert2
+-    out << "#ifndef __BIONIC__\n#define __assert2(a,b,c,d) ((void)0)\n#endif\n\n";
++    // TODO(b/31559095) bionic on host should define __assert2. Elsewhere,
++    // map it to the C library's [[noreturn]] __assert_fail (glibc, musl),
++    // so an unreachable union tag aborts instead of running off the end.
++    out << "#ifndef __BIONIC__\n#include <assert.h>\n"
++        << "#define __assert2(a,b,c,d) __assert_fail((d),(a),(b),(c))\n#endif\n\n";
+   }
+ }
+ 

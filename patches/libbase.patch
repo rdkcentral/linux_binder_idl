@@ -4,6 +4,22 @@ From: 8436e04cfaa6c21be86b37e9599184d77c67faef Wed May 25 18:41:55 2022
 Source: Comcast
 Subject: Fix the compilation issues in the Linux environment
 #####################################################################
+diff --git a/include/android-base/unique_fd.h b/include/android-base/unique_fd.h
+index e929e4c..1e36b75 100644
+--- a/include/android-base/unique_fd.h
++++ b/include/android-base/unique_fd.h
+@@ -75,7 +75,10 @@ class unique_fd_impl final {
+     return *this;
+   }
+ 
+-  [[clang::reinitializes]] void reset(int new_value = -1) { reset(new_value, nullptr); }
++#if defined(__clang__)
++  [[clang::reinitializes]]
++#endif
++  void reset(int new_value = -1) { reset(new_value, nullptr); }
+ 
+   int get() const { return fd_; }
+ 
 diff --git a/logging.cpp b/logging.cpp
 index e6c02ba..7a568ce 100644
 --- a/logging.cpp
