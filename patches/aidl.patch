@@ -23,43 +23,41 @@ index 2663295d..42c291c3 100644
    }
 
 diff --git a/aidl_const_expressions.cpp b/aidl_const_expressions.cpp
-index afab3a2..b73d7eb 100644
+index afab3a2..0ff5f3f 100644
 --- a/aidl_const_expressions.cpp
 +++ b/aidl_const_expressions.cpp
-@@ -62,12 +62,20 @@ class OverflowGuard {
+@@ -131,6 +131,31 @@ class OverflowGuard {
+   bool mOverflowed = false;
+ };
  
-   T operator+(T o) {
-     T out;
-+#ifdef __linux__
-+    mOverflowed = __builtin_add_overflow(mValue, o, reinterpret_cast<int*>(&out));
-+#else
-     mOverflowed = __builtin_add_overflow(mValue, o, &out);
-+#endif
-     return out;
-   }
-   T operator-(T o) {
-     T out;
-+#ifdef __linux__
-+    mOverflowed = __builtin_sub_overflow(mValue, o, reinterpret_cast<int*>(&out));
-+#else
-     mOverflowed = __builtin_sub_overflow(mValue, o, &out);
-+#endif
-     return out;
-   }
-   T operator*(T o) {
-@@ -79,8 +87,12 @@ class OverflowGuard {
-     // concerned about overflows elsewhere in the compiler in addition to
-     // those in interfaces.
-     out = mValue * o;
-+#else
-+#ifdef __linux__
-+    mOverflowed = __builtin_mul_overflow(mValue, o, reinterpret_cast<int*>(&out));
- #else
-     mOverflowed = __builtin_mul_overflow(mValue, o, &out);
-+#endif
- #endif
-     return out;
-   }
++// some compilers don't provide __builtin_add_overflow for bool
++// see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=71479
++template <>
++bool OverflowGuard<bool>::operator+(bool o) {
++  if (mValue && o) {
++    mOverflowed = true;
++    return false;
++  }
++  return mValue || o;
++}
++
++template <>
++bool OverflowGuard<bool>::operator-(bool o) {
++  if (!mValue && o) {
++    mOverflowed = true;
++    return true;
++  }
++  return mValue && !o;
++}
++
++template <>
++bool OverflowGuard<bool>::operator*(bool o) {
++  return mValue && o;
++}
++
+ template <typename T>
+ bool processGuard(const OverflowGuard<T>& guard, const AidlConstantValue& context) {
+   if (guard.Overflowed()) {
 diff --git a/location.h b/location.h
 index 9ccad24..e25d889 100644
 --- a/location.h
