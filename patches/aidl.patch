@@ -91,11 +91,11 @@ index 988ac2b..c000705 100644
    out << "DECLARE_META_INTERFACE(" << ClassName(interface, ClassNames::BASE) << ")\n";
    if (options.Version() > 0) {
 -    out << "const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
-+    out << "static const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
++    out << "static inline const int32_t VERSION = " << std::to_string(options.Version()) << ";\n";
    }
    if (!options.Hash().empty()) {
      out << "const std::string HASH = \"" << options.Hash() << "\";\n";
-+    out << "static constexpr char* HASHVALUE = \"" << options.Hash() << "\";\n";
++    out << "static constexpr const char* HASHVALUE = \"" << options.Hash() << "\";\n";
    }
    GenerateNestedTypeDecls(out, interface, typenames, options);
    GenerateConstantDeclarations(out, interface, typenames);
