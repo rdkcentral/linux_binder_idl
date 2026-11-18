@@ -97,7 +97,7 @@ index 0000000..7eb8725
 +};
 +#endif /* __cplusplus */
 diff --git a/liblog/logger.h b/liblog/logger.h
-index ddff19d..7a91e78 100644
+index ddff19d..6dde9c0 100644
 --- a/liblog/logger.h
 +++ b/liblog/logger.h
 @@ -16,7 +16,13 @@
@@ -106,7 +106,7 @@ index ddff19d..7a91e78 100644
  
 +#ifdef __cplusplus
 +#include <atomic>
-+using namespace std;
++using std::atomic_int;
 +#else
  #include <stdatomic.h>
 +#endif

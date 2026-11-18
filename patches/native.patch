@@ -197,17 +197,19 @@ index 3cfe529..e2e43d1 100644
      return Status::ok();
  }
 diff --git a/libs/binder/IMemory.cpp b/libs/binder/IMemory.cpp
-index c6b0cb7..6e3284e 100644
+index c6b0cb7..3403454 100644
 --- a/libs/binder/IMemory.cpp
 +++ b/libs/binder/IMemory.cpp
-@@ -17,7 +17,11 @@
+@@ -17,7 +17,13 @@
  #define LOG_TAG "IMemory"
  
  #include <atomic>
 +#if !defined(__linux__)
  #include <stdatomic.h>
 +#else
-+using namespace std;
++using std::memory_order_acquire;
++using std::memory_order_relaxed;
++using std::memory_order_release;
 +#endif
  
  #include <fcntl.h>
