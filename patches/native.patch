@@ -1,8 +1,8 @@
 #####################################################################
-Date: Thu Nov 2 13:57:44 2023 +0100
+Date: Wed Nov 11 13:27:41 2026 +0100
 From: ee3935f4c64d58f9f87ff6fac875cdad42f46038 Tue May 09 04:05:45 2023
 Source: Comcast & Android OpenSource Project
-Subject: Fix the compilation issues in the Linux environment
+Subject: Fix the compilation issues in the Linux environment & Coverity high severity issues
 #####################################################################
 diff --git a/cmds/servicemanager/Access.cpp b/cmds/servicemanager/Access.cpp
 index b7e520f..d29e790 100644
@@ -298,7 +298,7 @@ index f66993f..da5ae27 100644
  #define LOG_TAG "AidlLazyServiceRegistrar"
  
 diff --git a/libs/binder/Parcel.cpp b/libs/binder/Parcel.cpp
-index 58b0b35..fc2bf5a 100644
+index 58b0b35..f921d2c 100644
 --- a/libs/binder/Parcel.cpp
 +++ b/libs/binder/Parcel.cpp
 @@ -173,6 +173,24 @@ status_t Parcel::finishUnflattenBinder(
@@ -342,8 +342,34 @@ index 58b0b35..fc2bf5a 100644
  #if defined(__ANDROID_VNDK__)
  constexpr int32_t kHeader = B_PACK_CHARS('V', 'N', 'D', 'R');
  #elif defined(__ANDROID_RECOVERY__)
+@@ -2109,12 +2136,20 @@ status_t Parcel::read(FlattenableHelperInterface& val) const
+     status_t err = NO_ERROR;
+     for (size_t i=0 ; i<fd_count && err==NO_ERROR ; i++) {
+         int fd = this->readFileDescriptor();
+-        if (fd < 0 || ((fds[i] = fcntl(fd, F_DUPFD_CLOEXEC, 0)) < 0)) {
++        if (fd < 0) {
++            err = BAD_VALUE;
++            ALOGE("readFileDescriptor failed in Parcel::read, "
++                  "i is %zu, fd_count is %zu, error: %s",
++                  i, fd_count, strerror(-fd));
++        } else if ((fds[i] = fcntl(fd, F_DUPFD_CLOEXEC, 0)) < 0) {
+             err = BAD_VALUE;
+-            ALOGE("fcntl(F_DUPFD_CLOEXEC) failed in Parcel::read, i is %zu, fds[i] is %d, fd_count is %zu, error: %s",
+-                  i, fds[i], fd_count, strerror(fd < 0 ? -fd : errno));
+-            // Close all the file descriptors that were dup-ed.
+-            for (size_t j=0; j<i ;j++) {
++            ALOGE("fcntl(F_DUPFD_CLOEXEC) failed in Parcel::read, "
++                  "i is %zu, fds[i] is %d, fd_count is %zu, error: %s",
++                  i, fds[i], fd_count, strerror(errno));
++        }
++
++        if (err != NO_ERROR) {
++            for (size_t j = 0; j < i; j++) {
+                 close(fds[j]);
+             }
+         }
 diff --git a/libs/binder/ProcessState.cpp b/libs/binder/ProcessState.cpp
-index 4a01d81..bb19c5c 100644
+index 4a01d81..b189883 100644
 --- a/libs/binder/ProcessState.cpp
 +++ b/libs/binder/ProcessState.cpp
 @@ -193,7 +193,21 @@ bool ProcessState::becomeContextManager()
@@ -368,7 +394,15 @@ index 4a01d81..bb19c5c 100644
      };
  
      int result = ioctl(mDriverFD, BINDER_SET_CONTEXT_MGR_EXT, &obj);
-@@ -511,7 +525,7 @@ ProcessState::ProcessState(const char* driver)
+@@ -426,6 +440,7 @@ bool ProcessState::isDriverFeatureEnabled(const DriverFeature feature) {
+     if (read(fd, &on, sizeof(on)) == -1) {
+         ALOGE("%s: error reading to %s: %s", __func__,
+                  names[static_cast<int>(feature)], strerror(errno));
++        close(fd);
+         return false;
+     }
+     close(fd);
+@@ -511,7 +526,7 @@ ProcessState::ProcessState(const char* driver)
          }
      }
  

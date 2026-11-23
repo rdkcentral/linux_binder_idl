@@ -1,9 +1,41 @@
 #####################################################################
-Date: Thu Nov 2 15:45:32 2023 +0100
+Date: Wed Nov 11 13:23:41 2026 +0100
 From: 8436e04cfaa6c21be86b37e9599184d77c67faef Wed May 25 18:41:55 2022
 Source: Comcast
-Subject: Fix the compilation issues in the Linux environment
+Subject: Fix the compilation issues in the Linux environment & Coverity high severity issues
 #####################################################################
+diff --git a/file.cpp b/file.cpp
+index a580dcc..c41fc0d 100644
+--- a/file.cpp
++++ b/file.cpp
+@@ -249,11 +249,11 @@ bool WriteStringToFd(const std::string& content, borrowed_fd fd) {
+   size_t left = content.size();
+   while (left > 0) {
+     ssize_t n = TEMP_FAILURE_RETRY(write(fd.get(), p, left));
+-    if (n == -1) {
++    if (n <= 0) {
+       return false;
+     }
+-    p += n;
+-    left -= n;
++    p += static_cast<size_t>(n);
++    left -= static_cast<size_t>(n);
+   }
+   return true;
+ }
+@@ -355,9 +355,9 @@ bool WriteFully(borrowed_fd fd, const void* data, size_t byte_count) {
+   size_t remaining = byte_count;
+   while (remaining > 0) {
+     ssize_t n = TEMP_FAILURE_RETRY(write(fd.get(), p, remaining));
+-    if (n == -1) return false;
+-    p += n;
+-    remaining -= n;
++    if (n <= 0) return false;
++    p += static_cast<size_t>(n);
++    remaining -= static_cast<size_t>(n);
+   }
+   return true;
+ }
 diff --git a/logging.cpp b/logging.cpp
 index e6c02ba..7a568ce 100644
 --- a/logging.cpp
